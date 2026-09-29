@@ -16,6 +16,12 @@ struct Args {
 enum Command {
     /// Open the local dashboard and consolidated battery setup.
     Ui(appa_runtime::ui::Args),
+    /// Test runtime HTTP access from inside Codex's command sandbox.
+    #[command(hide = true)]
+    CodexProbe {
+        #[arg(long, env = "APPA_RUNTIME_URL")]
+        url: String,
+    },
     /// Run headless Claude with runtime-owned file tools and native tools removed.
     ClaudeFiles(appa_runtime::claude_files::Args),
     /// Internal trajectory-bound MCP server launched by claude-files.
@@ -133,6 +139,9 @@ enum Command {
     /// Post one harness hook event to the running runtime.
     #[command(hide = true)]
     Hook {
+        /// The harness whose hook format arrives on stdin.
+        #[arg(long, default_value_t = appa_runtime_api::AdapterName::ClaudeCode)]
+        adapter: appa_runtime_api::AdapterName,
         #[command(flatten)]
         target: appa_runtime::runtime_url::RuntimeUrl,
 
@@ -207,6 +216,7 @@ fn main() -> ExitCode {
         Command::Battery {
             command: PackageCommand::Status(args),
         } => appa_runtime::ui::status(args),
+        Command::CodexProbe { url } => appa_runtime::codex_probe::run(&url),
         Command::BuildInfo => appa_runtime::installation::native::build_info(),
         Command::ActivateClaude { config } => match appa_runtime::init::activate_claude_code(&config) {
             Ok(_) => ExitCode::SUCCESS,
@@ -248,6 +258,7 @@ fn main() -> ExitCode {
         Command::ClaudeFiles(args) => appa_runtime::claude_files::run(args),
         Command::FileMcp(args) => appa_runtime::claude_files::serve(args),
         Command::Hook {
+            adapter,
             target,
             turn_end,
             ensure_runtime,
@@ -264,7 +275,7 @@ fn main() -> ExitCode {
                 },
                 false => None,
             };
-            appa_runtime::hook_client::run(&target.resolve(), turn_end, deployment.as_ref())
+            appa_runtime::hook_client::run(&target.resolve_for(adapter), adapter, turn_end, deployment.as_ref())
         }
         Command::Statusline { target } => appa_runtime::statusline::run(&target.resolve()),
         Command::SessionContext { subagent } => appa_runtime::session_context::run(if subagent {
