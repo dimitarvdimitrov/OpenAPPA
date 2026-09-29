@@ -1,6 +1,10 @@
 # Codex
 
 Run this reference only in a Codex session started by `appa codex --`.
+On Codex CLI 0.159.0, the protected launcher's `code_mode_host=false` setting
+also disables shell requests. Report command execution as unsupported until
+the host-mode gate in `integrations/codex/PHASE7.md` passes; do not advise
+turning that feature on in a protected session as a workaround.
 
 ## Inspect
 

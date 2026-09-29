@@ -9,12 +9,14 @@ trust, audience, and attention requirements. No API key is needed.
 The wrapper confines complete stdout and stderr until APPA admits the result.
 The `redact-secrets` sanitizer can mask a withheld result before the model sees
 it. Output appears only after the command completes. A nonzero effectful
-command remains indeterminate with reservations retained; its admitted
-diagnostics can still be shown.
+command remains indeterminate with reservations retained, and its diagnostics
+are withheld. Nonzero commands under the shipped effect-free contract can
+return admitted diagnostics.
 
-Later nonempty stdin is a separate `host/codex/appa_stdin` call. Its classifier
-checks the exact input and the running command context before the wrapper
-forwards bytes. Empty polls do not add new input.
+The policy reserves a `host/codex/appa_stdin` declaration for later input
+checks. The current wrapper starts children with null stdin and does not
+forward nonempty input. Rerun a command with finite input supplied up front;
+do not rely on interactive prompts.
 
 Selectors match the command text, not every command's resolved file path or
 runtime behavior. Shell expansions, aliases, and scripts rely on the

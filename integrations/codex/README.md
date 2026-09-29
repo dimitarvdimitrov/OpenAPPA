@@ -1,6 +1,16 @@
 # Codex proxy compatibility probe
 
+See [the setup demo](DEMO.md) for installation and [Phase 7 findings](PHASE7.md)
+for the tested scope and remaining work. The protected launcher currently
+disables `code_mode_host`; on Codex CLI 0.159.0 this also disables the shell
+tool, so the full command workflow is not yet supported through `appa codex`.
+
 `proxy_probe.py` exercises a runtime-owned Bash job through the installed Codex CLI's command sandbox. Build `appa` first with `cargo build -p appa`, then run `python3 integrations/codex/proxy_probe.py`. The probe creates a temporary project and Codex profile, makes no model call, and reports whether a rewritten wrapper reaches the runtime and releases only the admitted result after completion.
+
+`live_e2e_probe.py` makes one authenticated, synthetic model call through
+Codex's hooks and the sandboxed wrapper. It enables `code_mode_host` and
+bypasses hook trust only for its disposable fixture; a passing result is not
+evidence that the protected launcher has passed its host-mode gate.
 
 The current command proxy is a **Unix, finite, noninteractive** implementation. It launches the selected `sh`, `bash`, or `zsh` login shell without a controlling terminal, buffers at most 1 MiB of combined output, and checks that the job remains active while it runs. Native Windows command execution, forwarded stdin, terminal jobs, and shell modes that cannot be reproduced are unsupported and refused. The proxy must be used with a protected launcher and a Codex sandbox profile that permits the disclosed `127.0.0.1` HTTP exception; the hook alone cannot guarantee coverage if Codex skips or disables it.
 
