@@ -1,8 +1,13 @@
 # appa-guide host parity
 
-This document defines parity between appa-guide on Claude Code and
-kagent. The shared router in `SKILL.md` owns these invariants. Host
+This document defines parity between appa-guide on Claude Code, Codex,
+and kagent. The shared router in `SKILL.md` owns these invariants. Host
 references implement them through different tools.
+
+Codex follows the local-file proposal and approval flow in the Claude Code
+column, using `appa describe --adapter codex` and its separate policy path.
+The Codex reference lists hook trust, command sandbox, and MCP-result gaps;
+those cases must be reported as unprotected rather than counted as parity.
 
 Parity does not require identical tool calls or prose. It requires the
 same policy meaning, operator decision points, fail-closed behavior, and

@@ -5,6 +5,8 @@ mode, proposal and approval rules. It routes to one host reference:
 
 - `references/claude-code.md` — Claude Code tool discovery, installed
   batteries and local runtime reload.
+- `references/codex.md` — Codex tool names, separate local deployment,
+  and its hook and sandbox coverage limits.
 - `references/kagent.md` — kagent CR discovery, and policy changes through
   the runtime-owned `appa_update_policy` and `appa_include_battery` tools,
   which validate, publish and reload.
