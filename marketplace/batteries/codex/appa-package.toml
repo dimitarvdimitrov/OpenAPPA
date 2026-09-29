@@ -1,0 +1,8 @@
+schema = 1
+name = "codex"
+description = "Codex host tool contracts and conservative command policy."
+
+[battery]
+policy = "appa.toml"
+hosts = ["codex"]
+namespaces = ["codex"]
