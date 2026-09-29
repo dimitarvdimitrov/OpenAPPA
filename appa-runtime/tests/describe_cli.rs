@@ -57,6 +57,29 @@ fn bare_describe_uses_the_installed_config_directory() {
 }
 
 #[test]
+fn codex_describe_selects_its_own_config_and_adapter() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let expected = directory.path().join("codex/appa.toml");
+    let output = Command::new(env!("CARGO_BIN_EXE_appa"))
+        .env("APPA_CONFIG_DIR", directory.path())
+        .args([
+            "describe",
+            "--adapter",
+            "codex",
+            "--session-tools",
+            "apply_patch,mcp__appa__yell",
+        ])
+        .output()
+        .expect("describe runs");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let description = String::from_utf8(output.stdout).expect("text description");
+    assert!(description.contains("Adapter: codex"));
+    assert!(description.contains(&format!("Config: {} (missing)", expected.display())));
+    assert!(!description.contains("unsupported adapter"));
+    assert!(!expected.exists());
+}
+
+#[test]
 fn describe_has_one_text_interface_and_no_json_mode() {
     let output = Command::new(env!("CARGO_BIN_EXE_appa"))
         .args(["describe", "--json"])

@@ -140,6 +140,9 @@ impl Selection {
     }
 
     fn validate(&self) -> Result<(), InstallError> {
+        if self.plugins.contains("claude-code") && self.plugins.contains("codex") {
+            return Err(InstallError::Invalid("Claude Code and Codex use separate deployments; install Codex without --config or select a separate config".into()));
+        }
         if self.kagent_runtime.is_some() != self.plugins.contains("kagent")
             || (self.kagent_assets.is_some() && self.kagent_runtime.is_none())
         {
@@ -577,9 +580,15 @@ impl Installation {
         let removed_claude = previous
             .as_ref()
             .filter(|previous| previous.plugins.contains("claude-code") && !selection.plugins.contains("claude-code"));
+        let removed_codex = previous
+            .as_ref()
+            .filter(|previous| previous.plugins.contains("codex") && !selection.plugins.contains("codex"));
         // Recovery replays a removal only with the version it was selected
         // under, so a removal that also changes version would never finish.
-        if removed_claude.is_some_and(|previous| previous.generation() != selection.generation()) {
+        if removed_claude
+            .or(removed_codex)
+            .is_some_and(|previous| previous.generation() != selection.generation())
+        {
             return Err(InstallError::Invalid(
                 "this change removes claude-code and changes version at once; run `appa plugin remove claude-code` first, then retry".into(),
             ));
@@ -595,7 +604,11 @@ impl Installation {
             }
         }
         selection.kagent_assets = kagent::prepare(self, &selection, after)?;
-        let activation = if selection.plugins.contains("claude-code") {
+        let activation = if selection.plugins.contains("codex") {
+            Activation::Codex
+        } else if removed_codex.is_some() {
+            Activation::RemoveCodex
+        } else if selection.plugins.contains("claude-code") {
             Activation::Claude
         } else if removed_claude.is_some() {
             Activation::RemoveClaude
@@ -638,10 +651,10 @@ impl Installation {
         crate::config::Config::load_from(candidate.path(), &[self.version_batteries(selection)])
             .map_err(|error| InstallError::Invalid(error.to_string()))?;
         let previous = self.selection()?;
-        if activation == Activation::Claude {
+        if matches!(activation, Activation::Claude | Activation::Codex) {
             // Missing or mismatched executables fail before the config changes.
             native::ClaudeArtifacts::prepare(self, selection.generation(), selection.platform)?;
-        } else if activation == Activation::RemoveClaude {
+        } else if matches!(activation, Activation::RemoveClaude | Activation::RemoveCodex) {
             let previous = previous
                 .as_ref()
                 .ok_or_else(|| InstallError::Invalid("native removal has no prior selection".into()))?;
@@ -695,13 +708,22 @@ impl Installation {
             })?;
         transaction.selection.validate()?;
         let selected_claude = transaction.selection.plugins.contains("claude-code");
+        let selected_codex = transaction.selection.plugins.contains("codex");
         let activation_matches = match transaction.activation {
-            Activation::None => !selected_claude,
+            Activation::None => !selected_claude && !selected_codex,
             Activation::Claude => selected_claude,
+            Activation::Codex => selected_codex,
             Activation::RemoveClaude => {
                 !selected_claude
                     && transaction.previous.as_ref().is_some_and(|previous| {
                         previous.plugins.contains("claude-code")
+                            && previous.generation() == transaction.selection.generation()
+                    })
+            }
+            Activation::RemoveCodex => {
+                !selected_codex
+                    && transaction.previous.as_ref().is_some_and(|previous| {
+                        previous.plugins.contains("codex")
                             && previous.generation() == transaction.selection.generation()
                     })
             }
@@ -743,6 +765,12 @@ impl Installation {
                             transaction.selection.platform,
                         )?
                         .activate(&self.config)?,
+                        Activation::Codex => native::ClaudeArtifacts::prepare(
+                            self,
+                            transaction.selection.generation(),
+                            transaction.selection.platform,
+                        )?
+                        .activate_codex(&self.config)?,
                         Activation::RemoveClaude => {
                             let previous = transaction
                                 .previous
@@ -753,6 +781,17 @@ impl Installation {
                                 })?;
                             native::ClaudeArtifacts::prepare(self, previous.generation(), previous.platform)?
                                 .remove(&self.config)?
+                        }
+                        Activation::RemoveCodex => {
+                            let previous = transaction
+                                .previous
+                                .as_ref()
+                                .filter(|selection| selection.plugins.contains("codex"))
+                                .ok_or_else(|| {
+                                    InstallError::Invalid("Codex removal requires its prior native artifact".into())
+                                })?;
+                            native::ClaudeArtifacts::prepare(self, previous.generation(), previous.platform)?
+                                .remove_codex(&self.config)?
                         }
                         Activation::None => unreachable!("native activation branch excludes None"),
                     }
@@ -824,6 +863,8 @@ enum Activation {
     None,
     Claude,
     RemoveClaude,
+    Codex,
+    RemoveCodex,
 }
 
 fn require_file_or_absent(path: &Path) -> Result<(), InstallError> {

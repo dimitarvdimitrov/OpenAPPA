@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use thiserror::Error;
 
+mod codex;
 mod config;
 pub(crate) mod endpoint;
 mod mcp;
@@ -24,7 +25,9 @@ mod removal;
 pub(crate) mod settings;
 mod skill;
 
+pub use self::codex::{activate_codex, codex_remove, launch_codex};
 pub(crate) use self::mcp::SERVER as RUNTIME_SERVER;
+pub use self::paths::installed_codex_config_path;
 pub use self::paths::installed_config_path;
 pub use self::removal::{Purge, PurgedRuntime, claude_code_purge, claude_code_remove};
 
@@ -66,6 +69,8 @@ pub enum InitError {
     UnloadableConfig { path: PathBuf, source: Box<ConfigError> },
     #[error("cannot change APPA integration state at {path}: {message}")]
     NativeState { path: PathBuf, message: String },
+    #[error("cannot parse the Codex profile at {path}: {message}")]
+    CodexProfile { path: PathBuf, message: String },
     #[error(
         "Claude Code has an MCP server named `{}` at {url} that no APPA install wrote; remove or rename it, then rerun the install",
         mcp::SERVER
