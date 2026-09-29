@@ -14,6 +14,11 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Start a Codex CLI session with OpenAPPA's installed hook profile.
+    Codex {
+        #[arg(last = true)]
+        args: Vec<OsString>,
+    },
     /// Test runtime HTTP access from inside Codex's command sandbox.
     #[command(hide = true)]
     CodexProbe {
@@ -41,9 +46,19 @@ enum Command {
         #[arg(long)]
         config: PathBuf,
     },
+    #[command(hide = true)]
+    ActivateCodex {
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Internal journalled removal using the selected release executable.
     #[command(hide = true)]
     RemoveClaude {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    #[command(hide = true)]
+    RemoveCodex {
         #[arg(long)]
         config: PathBuf,
     },
@@ -214,6 +229,7 @@ fn main() -> ExitCode {
         }
     };
     match parsed.command {
+        Command::Codex { args } => appa_runtime::init::launch_codex(args),
         Command::CodexProbe { url } => appa_runtime::codex_probe::run(&url),
         Command::CodexExec { url, handle } => appa_runtime::codex::exec::run(&url, &handle),
         Command::BuildInfo => appa_runtime::installation::native::build_info(),
@@ -228,6 +244,16 @@ fn main() -> ExitCode {
                 }
             }
         },
+        Command::ActivateCodex { config } => match appa_runtime::init::activate_codex(&config) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("appa: {error}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Plugin {
             command: PluginCommand::List(args),
         } => appa_runtime::installation::cli::list(appa_package::PackageKind::Plugin, args),
@@ -238,6 +264,13 @@ fn main() -> ExitCode {
             command: PluginCommand::Remove(args),
         } => appa_runtime::installation::cli::remove_plugin(args),
         Command::RemoveClaude { config: _ } => match appa_runtime::init::claude_code_remove() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("appa: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::RemoveCodex { config: _ } => match appa_runtime::init::codex_remove() {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("appa: {error}");
@@ -265,7 +298,7 @@ fn main() -> ExitCode {
             data_dir,
         } => {
             let deployment = match ensure_runtime {
-                true => match appa_runtime::runtime_start::Deployment::installed(config, data_dir) {
+                true => match appa_runtime::runtime_start::Deployment::installed_for(config, data_dir, adapter) {
                     Ok(deployment) => Some(deployment),
                     Err(error) => {
                         eprintln!("OpenAPPA hook blocked: {error}");
@@ -299,7 +332,13 @@ fn main() -> ExitCode {
             check,
             session_tools,
         } => {
-            let config = config.unwrap_or_else(appa_runtime::init::installed_config_path);
+            let config = config.unwrap_or_else(|| {
+                if adapter == AdapterName::Codex {
+                    appa_runtime::init::installed_codex_config_path()
+                } else {
+                    appa_runtime::init::installed_config_path()
+                }
+            });
             let batteries_dir = if batteries_dir.is_empty() {
                 appa_runtime::batteries::default_search_path(&config)
             } else {

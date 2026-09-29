@@ -132,15 +132,26 @@ enum RuntimeCommand {
 
 /// `appa runtime ensure`: the start every protected SessionStart performs, run
 /// on its own by the install as its last step, from the deployed binary.
-fn ensure(target: &crate::runtime_url::RuntimeUrl, config: Option<PathBuf>, data_dir: Option<PathBuf>) -> ExitCode {
-    let started = crate::runtime_start::Deployment::installed(config, data_dir).and_then(|deployment| {
+fn ensure(
+    target: &crate::runtime_url::RuntimeUrl,
+    config: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    adapter: AdapterName,
+) -> ExitCode {
+    let started = crate::runtime_start::Deployment::installed_for(config, data_dir, adapter).and_then(|deployment| {
         let executable = std::env::current_exe().map_err(|error| {
             crate::runtime_start::StartError::Paths(format!("this executable has no path to start from: {error}"))
         })?;
         // An install run from inside a Claude Code session must not hand that
         // session's credential to a runtime that outlives it.
         let withheld = appa_adapter_claude_code::environment::session_scoped(std::env::vars_os().map(|(name, _)| name));
-        crate::runtime_start::ensure(&target.resolve(), &deployment, &executable, &withheld)
+        crate::runtime_start::ensure_for(
+            &target.resolve_for(adapter),
+            &deployment,
+            &executable,
+            &withheld,
+            adapter,
+        )
     });
     match started {
         Ok(()) => ExitCode::SUCCESS,
@@ -152,8 +163,8 @@ fn ensure(target: &crate::runtime_url::RuntimeUrl, config: Option<PathBuf>, data
 }
 
 /// `appa runtime stop`: the deployed runtime goes, whichever install started it.
-fn stop(target: &crate::runtime_url::RuntimeUrl) -> ExitCode {
-    let target = target.resolve();
+fn stop(target: &crate::runtime_url::RuntimeUrl, adapter: AdapterName) -> ExitCode {
+    let target = target.resolve_for(adapter);
     match crate::runtime_start::stop(&target) {
         Ok(crate::runtime_start::Stopped::Nothing) => {
             println!("nothing answers {}", target.url);
@@ -638,20 +649,11 @@ where
     T: Into<OsString> + Clone,
 {
     let args = Args::parse_from(args);
-    if args.adapter == AdapterName::Codex
-        && matches!(
-            &args.command,
-            Some(RuntimeCommand::Ensure { .. } | RuntimeCommand::Stop { .. })
-        )
-    {
-        eprintln!(
-            "appa runtime: Codex lifecycle commands require the separate Codex deployment and are not active yet"
-        );
-        return ExitCode::FAILURE;
-    }
     let annotating = match args.command {
-        Some(RuntimeCommand::Ensure { target, data_dir }) => return ensure(&target, args.config, data_dir),
-        Some(RuntimeCommand::Stop { target }) => return stop(&target),
+        Some(RuntimeCommand::Ensure { target, data_dir }) => {
+            return ensure(&target, args.config, data_dir, args.adapter);
+        }
+        Some(RuntimeCommand::Stop { target }) => return stop(&target, args.adapter),
         Some(RuntimeCommand::Annotate { repeat, concurrency }) => Some((repeat, concurrency)),
         None => None,
     };

@@ -226,7 +226,7 @@ pub fn run(target: &RuntimeTarget, host: AdapterName, turn_end: bool, ensure: Op
         // The runtime outlives this session; what the session was handed for
         // itself alone must not reach it.
         let withheld = appa_adapter_claude_code::environment::session_scoped(std::env::vars_os().map(|(name, _)| name));
-        if let Err(error) = runtime_start::ensure(target, deployment, &executable, &withheld) {
+        if let Err(error) = runtime_start::ensure_for(target, deployment, &executable, &withheld, host) {
             return block(&format!("the runtime could not be started: {error}"));
         }
     }

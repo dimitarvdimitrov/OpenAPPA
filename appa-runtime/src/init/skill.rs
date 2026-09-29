@@ -18,6 +18,11 @@ pub(super) const TEXT: &str = concat!(
     "\n\n",
     include_str!("../../../integrations/appa-guide/references/claude-code.md"),
 );
+const CODEX_TEXT: &str = concat!(
+    include_str!("../../../integrations/appa-guide/SKILL.md"),
+    "\n\n",
+    include_str!("../../../integrations/appa-guide/references/codex.md"),
+);
 
 const CONTRACTS: &str = include_str!("../../../website/content/docs/contracts.md");
 
@@ -101,6 +106,38 @@ pub(super) fn remove(claude_dir: &Path) -> Result<(), InitError> {
             tracing::debug!(path = %directory.display(), %error, "leaving the skill directory");
         }
     }
+    Ok(())
+}
+
+pub(super) fn install_codex(codex_dir: &Path, compensation: &mut Compensation) -> Result<(), InitError> {
+    let skill = path(codex_dir);
+    match file_before(&skill)? {
+        Some(bytes) if !bytes.starts_with(OWNED_PREFIX.as_bytes()) => {
+            return Err(InitError::SkillConflict { path: skill });
+        }
+        Some(bytes) if bytes == CODEX_TEXT.as_bytes() => return Ok(()),
+        _ => {}
+    }
+    write(&skill, CODEX_TEXT, compensation)
+}
+
+pub(super) fn remove_codex(codex_dir: &Path, compensation: &mut Compensation) -> Result<(), InitError> {
+    let skill = path(codex_dir);
+    let before = file_before(&skill)?;
+    match before.as_deref() {
+        None => return Ok(()),
+        Some(bytes) if bytes.starts_with(OWNED_PREFIX.as_bytes()) => {}
+        Some(_) => return Err(InitError::SkillConflict { path: skill }),
+    }
+    compensation.record(Undo::File {
+        path: skill.clone(),
+        before,
+    });
+    fs::remove_file(&skill).map_err(|source| InitError::WriteFile {
+        path: skill.clone(),
+        source,
+    })?;
+    let _ = fs::remove_dir(skill.parent().expect("skill parent"));
     Ok(())
 }
 

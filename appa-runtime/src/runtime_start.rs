@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use appa_runtime_api::AdapterName;
 use thiserror::Error;
 
 use crate::init::endpoint::{is_owned_appa_runtime, process_exists, terminate_appa_pid};
@@ -61,6 +62,12 @@ pub enum StartError {
     },
     #[error("the runtime did not become healthy at {url}. Its own error is the last line of {log}")]
     NotHealthy { url: String, log: PathBuf },
+    #[error("the runtime at {url} serves {actual}, not the requested {expected} adapter")]
+    AdapterMismatch {
+        url: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 /// Why the runtime answering an endpoint was not stopped.
@@ -129,14 +136,31 @@ pub struct Deployment {
 impl Deployment {
     /// The given paths, or the installed deployment's own for whichever is absent.
     pub fn installed(config: Option<PathBuf>, data_dir: Option<PathBuf>) -> Result<Self, StartError> {
+        Self::installed_for(config, data_dir, AdapterName::ClaudeCode)
+    }
+
+    pub fn installed_for(
+        config: Option<PathBuf>,
+        data_dir: Option<PathBuf>,
+        adapter: AdapterName,
+    ) -> Result<Self, StartError> {
         let data_dir = match data_dir {
             Some(data_dir) => data_dir,
+            None if adapter == AdapterName::Codex => {
+                crate::init::paths::codex_data_dir().map_err(|error| StartError::Paths(error.to_string()))?
+            }
             None => crate::init::paths::installed_data_dir()
                 .map_err(|error| StartError::Paths(error.to_string()))?
                 .ok_or_else(|| StartError::Paths("no home directory names the data directory".to_owned()))?,
         };
         Ok(Self {
-            config: config.unwrap_or_else(crate::init::installed_config_path),
+            config: config.unwrap_or_else(|| {
+                if adapter == AdapterName::Codex {
+                    crate::init::paths::installed_codex_config_path()
+                } else {
+                    crate::init::installed_config_path()
+                }
+            }),
             data_dir,
         })
     }
@@ -158,12 +182,28 @@ pub fn ensure(
     executable: &Path,
     withheld: &[OsString],
 ) -> Result<(), StartError> {
+    ensure_for(target, deployment, executable, withheld, AdapterName::ClaudeCode)
+}
+
+pub fn ensure_for(
+    target: &RuntimeTarget,
+    deployment: &Deployment,
+    executable: &Path,
+    withheld: &[OsString],
+    adapter: AdapterName,
+) -> Result<(), StartError> {
     let endpoint = Endpoint::parse(&target.url).map_err(|reason| StartError::Endpoint {
         url: target.url.clone(),
         reason,
     })?;
     match probe(&endpoint) {
-        Health::Ok => return Ok(()),
+        Health::Ok => {
+            return if adapter == AdapterName::Codex {
+                verify_adapter(&endpoint, &target.url, adapter)
+            } else {
+                Ok(())
+            };
+        }
         Health::Stale(_) if target.user_owned => return Ok(()),
         Health::Stale(pid) => {
             if stop_stale(&endpoint, &target.url, pid)? {
@@ -184,7 +224,31 @@ pub fn ensure(
         }
         Health::Unreachable => {}
     }
-    start(&endpoint, &target.url, deployment, executable, withheld)
+    start(&endpoint, &target.url, deployment, executable, withheld, adapter)?;
+    if adapter == AdapterName::Codex {
+        verify_adapter(&endpoint, &target.url, adapter)
+    } else {
+        Ok(())
+    }
+}
+
+fn verify_adapter(endpoint: &Endpoint, url: &str, adapter: AdapterName) -> Result<(), StartError> {
+    let answer =
+        get(endpoint, "/adapter", &Deadline::spanning(PROBE_BUDGET)).map_err(|error| StartError::AdapterMismatch {
+            url: url.to_owned(),
+            expected: adapter.as_str().to_owned(),
+            actual: error.to_string(),
+        })?;
+    let actual = String::from_utf8_lossy(&answer.body).trim().to_owned();
+    if answer.is_success() && actual == adapter.as_str() {
+        Ok(())
+    } else {
+        Err(StartError::AdapterMismatch {
+            url: url.to_owned(),
+            expected: adapter.as_str().to_owned(),
+            actual,
+        })
+    }
 }
 
 /// Stop the runtime answering `target`, whichever deployment started it, when
@@ -329,6 +393,7 @@ fn start(
     deployment: &Deployment,
     executable: &Path,
     withheld: &[OsString],
+    adapter: AdapterName,
 ) -> Result<(), StartError> {
     // The runtime writes the default policy on its first start and refuses to
     // start when it cannot.
@@ -356,6 +421,8 @@ fn start(
     let mut command = Command::new(executable);
     command
         .arg("runtime")
+        .arg("--adapter")
+        .arg(adapter.as_str())
         .arg("--listen")
         .arg(endpoint.authority())
         .arg("--config")
