@@ -1,6 +1,6 @@
 ---
 name: appa-guide
-description: Set up and tune OpenAPPA on the host you run in — Claude Code or a kagent cluster. Checks which tools and MCP servers the policy covers, includes the batteries that fit, writes rules for the rest, explains why a call was blocked, and makes the defaults stricter or looser on request.
+description: Set up and tune OpenAPPA on the host you run in — Claude Code, Codex, or a kagent cluster. Checks which tools and MCP servers the policy covers, includes the batteries that fit, writes rules for the rest, explains why a call was blocked, and makes the defaults stricter or looser on request.
 argument-hint: "[init | adjust | explain | what you want]"
 ---
 
@@ -19,6 +19,9 @@ guess its content.
   `references/claude-code.md` to this `SKILL.md`; continue at its
   `# Claude Code` section below. Do not call `Read` to load the
   reference.
+- **Codex**: this session has the APPA `appa` MCP server and Codex tools.
+  The Codex package appends `references/codex.md` to this skill; continue
+  at its `# Codex` section below. Do not use Claude tool names or paths.
 - **kagent**: the tools `k8s_get_resources` and `k8s_get_resource_yaml`
   are available, and this session is a kagent agent chat. Before any
   cluster action, call `read_file` for
@@ -30,7 +33,7 @@ guess its content.
   reference, including `appa_update_policy`. Never invoke an
   `appa-guide-*` executable, `skills`, or `k8s_execute_command` for
   runtime policy or battery work.
-- Neither: say that this skill supports Claude Code and kagent hosts,
+- Neither: say that this skill supports Claude Code, Codex, and kagent hosts,
   and stop.
 
 ## Mode
@@ -55,7 +58,7 @@ modes together. Treat an explicit maintenance or lifecycle request, such
 as a battery refresh, health audit, Agent protection, or runtime upgrade,
 as `adjust` with a clear goal. Treat "why was this blocked", "show
 policy", or "what does the policy do" as `explain`, on the host's
-read-only tools (`appa describe` on Claude Code, `appa_get_runtime_state`
+read-only tools (`appa describe` on Claude Code and Codex, `appa_get_runtime_state`
 on kagent). If the operator chooses `adjust` without describing the
 change, ask what they want OpenAPPA to do differently.
 

@@ -126,6 +126,7 @@ jobs:
               - 'examples/**'
               - 'marketplace/batteries/**'
               - 'marketplace/plugins/claude-code/**'
+              - 'marketplace/plugins/codex/**'
               - 'integrations/appa-guide/**'
               - 'marketplace/plugins/kagent/fixtures/**'
               - 'website/content/docs/contracts.md'

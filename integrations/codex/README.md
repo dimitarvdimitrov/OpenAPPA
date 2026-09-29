@@ -8,6 +8,13 @@ Run `python3 integrations/codex/proxy_probe.py`.
 The probe uses a temporary project and a temporary Codex profile. It makes no model call.
 It checks the rewritten wrapper, the admitted result, early output, and a forged job handle.
 
+## Launcher
+
+`appa plugin install codex` adds an `appa` permission profile to the active Codex config.
+`appa codex --` selects the profile, enables Codex's filtered network proxy, and runs an HTTP handshake from `codex sandbox` before launch.
+The profile permits all sandboxed commands to reach all ports on `127.0.0.1`.
+Codex requires a manual `/hooks` review because the launcher cannot verify hook trust through a supported noninteractive interface.
+
 ## Scope
 
 The proxy supports finite Unix commands without later input. It starts the selected `sh`, `bash`, or `zsh` shell without a controlling terminal.

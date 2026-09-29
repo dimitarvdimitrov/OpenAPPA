@@ -95,6 +95,8 @@ Setup, upgrade and uninstall: [Claude Code
 integration](https://openappa.com/claude-code) ·
 [`marketplace/plugins/claude-code`](marketplace/plugins/claude-code/README.md).
 
+Codex CLI has a separate local integration: [Codex setup and limits](website/content/docs/codex.md).
+
 Plugin and battery installation, explicit version updates, offline bundles,
 and kagent deployment preparation: [marketplace guide](marketplace/README.md).
 
