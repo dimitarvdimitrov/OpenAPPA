@@ -4,7 +4,7 @@ description = "Rules for the hosted xmemory instance and admin MCP servers' 32 t
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code", "kagent"]
+hosts = ["claude-code", "kagent", "codex"]
 namespaces = ["xmemory"]
 helpers = []
 benefit = "Rules for the 32 tools of the xmemory instance and admin servers: APPA keeps memory internal, lets only trusted data into memory, and asks a person before a schema migration or an instance deletion."

@@ -4,7 +4,7 @@ description = "Rules for the GitHub MCP server with its default tool sets: profi
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code", "kagent"]
+hosts = ["claude-code", "kagent", "codex"]
 namespaces = ["github"]
 detect = ["gh"]
 helpers = ["audience-source.py", "context.py", "repository-visibility.py", "github_token.py"]

@@ -4,7 +4,7 @@ description = "Rules for Databricks' managed MCP servers: Genie One's five tools
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code"]
+hosts = ["claude-code", "codex"]
 namespaces = ["databricks"]
 helpers = ["audience-source.py"]
 benefit = "APPA asks Databricks, through the Databricks CLI, who the workspace users are, who is in each group, and who can use a Genie space. With this, APPA lets workspace data flow only to workspace members."

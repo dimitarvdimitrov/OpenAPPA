@@ -4,7 +4,7 @@ description = "Rules for the hosted Hugging Face MCP server: account, search, re
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code", "kagent"]
+hosts = ["claude-code", "kagent", "codex"]
 namespaces = ["huggingface"]
 helpers = ["audience-source.py", "repo-visibility.py", "hf_token.py"]
 benefit = "APPA asks the Hugging Face Hub if each repository a call names is public, private, or gated. With this, APPA keeps private and gated content with you, and writes to a public repository only data that anyone may see."
