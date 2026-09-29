@@ -4,7 +4,7 @@ description = "Rules for the hosted xmemory instance and admin MCP servers' 32 t
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code", "kagent"]
+hosts = ["claude-code", "kagent", "codex"]
 namespaces = ["xmemory"]
 helpers = []
 setup = "Bind each xmemory server you run: appa battery install xmemory --server <instance-server> --server <admin-server>. A deployment with one of them binds that one."

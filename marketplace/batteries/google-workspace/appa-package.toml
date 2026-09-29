@@ -4,7 +4,7 @@ description = "Rules for the claude.ai Google Drive connector, all 11 of its too
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code"]
+hosts = ["claude-code", "codex"]
 namespaces = ["google-workspace", "claude_ai_Google_Drive"]
 helpers = ["audience-source.py"]
 
