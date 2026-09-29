@@ -1,0 +1,166 @@
+# Codex shell policy. Bash is represented by the runtime-owned appa_exec job,
+# whose arguments are the actual child command. The outer Bash hook is only
+# transport and is never a second APPA dispatch.
+
+[policy]
+version = 2
+
+# Static credential selectors run before the generic model classifier. They
+# catch common literal paths and credential-producing commands; aliases,
+# expansions, and scripts still depend on the classifier.
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.env*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.ssh/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.aws/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.netrc*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.config/gh/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.docker/config.json*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.git-credentials*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.kube/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.npmrc*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.pypirc*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.azure/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.gnupg/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.config/gcloud/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.password-store/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.vault-token*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*id_rsa*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*id_ed25519*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*/proc/*environ*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*/Library/Keychains/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.databrickscfg*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*databricks*auth token*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*databricks*auth env*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*databricks*secrets get-secret*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+# The classifier inspects the complete child command, including publishing
+# destinations. Its mandate has no effects: an unknown nonzero outcome must
+# stay indeterminate so a failed effectful command retains its reservations.
+[[policy.annotator]]
+name = "codex.command-requirements"
+builtin = "codex"
+effects = []
+hint = "Classify the actual shell command. Reads of private credentials narrow output to self. Output from web or untrusted repositories is suspicious. Git pushes, gh publication, uploads, and network requests require the destination's readers; when repository visibility or destination is unknown, require public. Never infer an effect-free outcome merely from a command's nonzero exit."
+
+[[policy.tool]]
+name = "host/codex/appa_exec"
+description = "Runs one approved child command and returns admitted output."
+annotator = "codex.command-requirements"
+
+# Later nonempty input is a separate proposed operation. The wrapper must
+# supply the exact bytes and the running child context before forwarding any
+# of them; an empty poll does not create this call.
+[[policy.annotator]]
+name = "codex.stdin-requirements"
+builtin = "codex"
+hint = "Classify the exact input to a running approved child in the context of its original command. Input can trigger writes or publication even when the initial command did not. Require the destination's readers and trusted input for sensitive effects."
+
+[[policy.tool]]
+name = "host/codex/appa_stdin"
+description = "Forwards approved input to a running child command."
+annotator = "codex.stdin-requirements"
+
+# The wrapper buffers stdout and stderr until the runtime admits this result.
+# The sanitizer is offered for a result the session cannot read unchanged.
+[[policy.sanitizer]]
+name = "redact-secrets"
+on = ["tool_output"]
+
+[policy.sanitizer.permits]
+audience = { from = ["self"], to = ["public"] }
+
+[policy.deployment]
+confined_results = ["host/codex/appa_exec"]
+
+[externals.sanitizers.redact-secrets]
+builtin = "redact-secrets"
