@@ -45,14 +45,19 @@ These checks use synthetic markers and temporary projects:
 cargo build -p appa
 python3 integrations/codex/probe.py
 python3 integrations/codex/proxy_probe.py
+python3 integrations/codex/sandbox_guards_probe.py
+python3 integrations/codex/lifecycle_probe.py
+python3 integrations/codex/classifier_probe.py
+python3 integrations/codex/hook_failure_probe.py
 python3 integrations/codex/live_e2e_probe.py
 ```
 
-The last check makes one authenticated model call using the saved Codex login.
-It applies a temporary permission profile and bypasses hook trust only for
-disposable probe hooks. It verifies a Codex call, APPA rewrite, sandboxed
-wrapper, admitted output, and model-visible marker. It is a compatibility
-probe, not evidence that `appa codex` currently offers complete coverage.
+The classifier, hook-failure, and last checks make authenticated model calls
+using the saved Codex login. The last check applies a temporary permission
+profile and bypasses hook trust only for disposable probe hooks. It verifies
+a Codex call, APPA rewrite, sandboxed wrapper, admitted output, and
+model-visible marker. These are compatibility probes, not evidence that
+`appa codex` currently offers complete coverage.
 
 To unregister the installed hooks, MCP entry and guide while retaining the
 policy and data, run `appa plugin remove codex`. If you also want to stop the

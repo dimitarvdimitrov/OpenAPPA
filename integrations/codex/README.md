@@ -12,6 +12,9 @@ Codex's hooks and the sandboxed wrapper. It enables `code_mode_host` and
 bypasses hook trust only for its disposable fixture; a passing result is not
 evidence that the protected launcher has passed its host-mode gate.
 
+The [validation report](PHASE7.md) lists the other disposable probes for the
+default classifier, hook failure behavior, sandbox guards, and hook lifecycle.
+
 The current command proxy is a **Unix, finite, noninteractive** implementation. It launches the selected `sh`, `bash`, or `zsh` login shell without a controlling terminal, buffers at most 1 MiB of combined output, and checks that the job remains active while it runs. Native Windows command execution, forwarded stdin, terminal jobs, and shell modes that cannot be reproduced are unsupported and refused. The proxy must be used with a protected launcher and a Codex sandbox profile that permits the disclosed `127.0.0.1` HTTP exception; the hook alone cannot guarantee coverage if Codex skips or disables it.
 
 `appa plugin install codex` adds an `appa` permission profile to the active Codex config. `appa codex --` selects it, enables Codex's filtered network proxy, and runs an HTTP handshake from `codex sandbox` before launching. The profile's `127.0.0.1` permission applies to all sandboxed commands and all ports on that host. Codex's hook trust still needs a manual `/hooks` review; the launcher cannot verify it through a supported noninteractive interface.
