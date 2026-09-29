@@ -22,6 +22,13 @@ enum Command {
         #[arg(long, env = "APPA_RUNTIME_URL")]
         url: String,
     },
+    /// Execute a runtime-authorized Codex command inside the host sandbox.
+    #[command(hide = true)]
+    CodexExec {
+        #[arg(long)]
+        url: String,
+        handle: String,
+    },
     /// Run headless Claude with runtime-owned file tools and native tools removed.
     ClaudeFiles(appa_runtime::claude_files::Args),
     /// Internal trajectory-bound MCP server launched by claude-files.
@@ -217,6 +224,7 @@ fn main() -> ExitCode {
             command: PackageCommand::Status(args),
         } => appa_runtime::ui::status(args),
         Command::CodexProbe { url } => appa_runtime::codex_probe::run(&url),
+        Command::CodexExec { url, handle } => appa_runtime::codex::exec::run(&url, &handle),
         Command::BuildInfo => appa_runtime::installation::native::build_info(),
         Command::ActivateClaude { config } => match appa_runtime::init::activate_claude_code(&config) {
             Ok(_) => ExitCode::SUCCESS,
