@@ -4,7 +4,7 @@ description = "An annotator that asks TypeSafe's Jev model for a tool call's lab
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code", "kagent"]
+hosts = ["claude-code", "kagent", "codex"]
 helpers = []
 benefit = "APPA asks TypeSafe's Jev model for the audience and trust of each tool call that you route to it. With this, APPA can label calls that have no static rule."
 setup = [

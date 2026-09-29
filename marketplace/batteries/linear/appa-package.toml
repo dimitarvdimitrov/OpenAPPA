@@ -4,7 +4,7 @@ description = "Policy for 65 Linear MCP tools: per-issue, per-team, per-project 
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code", "kagent"]
+hosts = ["claude-code", "kagent", "codex"]
 namespaces = ["linear"]
 helpers = ["audience-source.py"]
 benefit = "APPA asks Linear who can see each team, issue, project, and document. With this, APPA lets Linear data flow only to people who can already read it in Linear."

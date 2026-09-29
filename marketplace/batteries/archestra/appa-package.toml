@@ -4,7 +4,7 @@ description = "Rules for Archestra's built-in sharing tools: projects, apps, kno
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code"]
+hosts = ["claude-code", "codex"]
 namespaces = ["archestra"]
 helpers = ["audience-source.py"]
 benefit = "APPA asks your Archestra server who is in the organization, in each team, and which user a share names. With this, APPA lets a share expose only data those people can already see."
