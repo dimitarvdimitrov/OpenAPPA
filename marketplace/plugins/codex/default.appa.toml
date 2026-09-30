@@ -23,12 +23,26 @@ annotator = "codex.local-read"
 
 # Patch text is delivered as `tool_input.command`, including paths and new
 # contents. The classifier sees that complete call; it must ask for trusted
-# input when the patch changes instructions, hooks, or policy, and label
-# external text it reads. A bare static allow would lose those distinctions.
+# input when the patch changes instructions or policy. Hook and MCP
+# configuration edits also require fresh human review. The classifier keeps
+# the audience and trust restrictions for every file in a mixed patch.
 [[policy.annotator]]
 name = "codex.patch-requirements"
 builtin = "codex"
-hint = "The apply_patch command includes paths and replacement content. Require trusted input for edits to AGENTS.md, Codex instructions/settings/hooks, APPA policy, executable hooks, or credential files. Treat any network destination named in the patch as public unless the call establishes a narrower reader."
+marks = ["hitl"]
+hint = """
+Inspect additions, deletions, renames, and content.
+Require trusted input for AGENTS.md, Codex instructions/settings, APPA policy, hooks, and credentials.
+For hook or MCP edits, require fresh attention hitl even when trusted.
+Protect these paths and relocated equivalents:
+- .mcp.json
+- .codex/config.toml
+- .codex/hooks.json
+- .codex/hooks/*
+- .claude/hooks/*
+Preserve trust and audience for every file in mixed patches.
+For network destinations, require public unless the call establishes narrower readers.
+"""
 
 [[policy.tool]]
 name = "host/codex/apply_patch"
