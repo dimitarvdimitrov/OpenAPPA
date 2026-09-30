@@ -44,6 +44,11 @@ appa codex --
 
 The launcher uses your Codex shell setting, `features.code_mode_host`.
 Codex CLI 0.159.2 enables the shell by default.
+For this launch, it sets `approval_policy = "on-request"` and `approvals_reviewer = "user"`.
+It also sets `execute_remedy_plan` to `approval_mode = "approve"` for the `appa` MCP server.
+This setting lets remedies reach APPA without a separate Codex tool approval prompt.
+APPA still asks you to approve any remedy that requires human review.
+Your global Codex settings stay unchanged. Explicit conflicting approval options cause a launch error.
 Before Codex starts, the launcher checks that commands in the Codex sandbox can reach APPA.
 If this check fails, the launcher reports the error and stops.
 

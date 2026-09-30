@@ -8,6 +8,11 @@ After installation, review and trust the APPA hooks through Codex `/hooks`.
 Start a session with `appa codex --`.
 Remove installer-owned registrations with `appa plugin remove codex`.
 
+The launcher sets `approval_policy = "on-request"` and `approvals_reviewer = "user"` for that session.
+It sets `appa`'s `execute_remedy_plan` tool to `approval_mode = "approve"` so remedies reach APPA without a separate Codex prompt.
+APPA still requests human approval when a remedy requires it.
+The launcher preserves global Codex settings and rejects explicit conflicting approval options.
+
 The default policy includes the Codex battery for command contracts.
 The root policy supplies patch, local image, plan, web, and reporting contracts.
 `host/codex/webrun` requires a `public` audience and labels web results `suspicious`.
