@@ -1,9 +1,9 @@
-# Codex host-mode compatibility
+# Codex compatibility test results
 
-On Codex CLI 0.159.2 for macOS 26.6.2 arm64, an unwrapped shell accepted later input without a new pre-use hook.
+On Codex CLI 0.159.2 for macOS 26.6.2 arm64, a shell outside APPA accepted more input without another hook check.
 The tested binary SHA-256 is `16593cc2f422d5f398a8e40f550ebbaf1245392528957be342c295920a300704`.
-The probes ran on 30 September 2026 with temporary projects and synthetic data.
-The model probes used the saved login, isolated user configuration, and temporary hook definitions.
+The tests ran on 30 September 2026 with temporary projects and synthetic data.
+The model tests used the saved login, isolated user configuration, and temporary hook definitions.
 
 ## Tool routes
 
@@ -34,7 +34,19 @@ It does not repair a skipped or failed pre-use hook.
 
 With `code_mode_host=false`, a shell request failed with `code-mode host is disabled`.
 No tool hook ran for that request.
-The result matched the Phase 7 observation on Codex CLI 0.159.0.
+
+## Command input and cancellation
+
+A direct `codex sandbox` command received input through a FIFO without echo.
+A disposable Codex session then ran the APPA wrapper.
+Its command received EOF before more input arrived.
+Codex returned `write_stdin failed: stdin is closed for this session; rerun exec_command with tty=true to keep stdin open`.
+The terminal retry echoed the synthetic `HELLO` input.
+The wrapper keeps command input closed.
+
+A command that detaches from its shell can survive cancellation.
+Codex CLI 0.159.0 also left such a command alive after its parent exited.
+The wrapper cannot reverse that command's side effects.
 
 ## Hook failure result
 
@@ -54,13 +66,13 @@ For Bash, it accepts only an explicit denial or a nonempty command wrapper.
 The supervisor cannot protect a hook that Codex skips because it lacks trust.
 It cannot answer if its own process fails to start or stops before it writes a response.
 These paths still let Codex run an original command.
-No manually trusted protected session test ran in this probe.
+These tests did not include a session with hooks manually trusted through `/hooks`.
 
 A disposable live Codex session also tested the installed supervisor command.
-The probe used a temporary hook and bypassed trust for that temporary hook only.
-The APPA worker could not reach its test endpoint, so the supervisor returned a `PreToolUse` denial.
+The test used a temporary hook and bypassed trust for that temporary hook only.
+The APPA worker did not reach its test endpoint, so the supervisor returned a `PreToolUse` denial.
 Codex blocked the shell request, and no marker file appeared.
-This probe does not establish trust for the installed hooks.
+This test does not establish trust for the installed hooks.
 
 ## Sandbox HTTP result
 
@@ -85,6 +97,6 @@ python3 integrations/codex/hook_failure_probe.py
 python3 integrations/codex/sandbox_http_probe.py
 ```
 
-The route and failure probes make authenticated model calls.
+The route and failure tests make authenticated model calls.
 They use temporary hooks and a trust bypass only for those temporary definitions.
 They do not change the user's Codex profile or prove manual hook trust.

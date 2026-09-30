@@ -1,18 +1,17 @@
 # Codex
 
-Start a Codex session with `appa codex --` after you install the plugin.
-Review and trust the installed hooks in `/hooks`.
-Do not describe a regular Codex session as protected by this policy.
+Use this reference in a Codex session started with `appa codex --` after plugin installation.
+The shared skill carries the `init`, `adjust`, and `explain` rules.
 
 ## Inspect
 
-1. Check the APPA MCP connection.
-2. Run `appa describe --adapter codex --config <installed Codex policy> --check`.
-3. List the tool names visible in this session.
-4. Pass the names with `--session-tools` to `appa describe --adapter codex`.
-5. Include MCP server names as Codex reports them.
-6. Inspect the included and available batteries.
-7. Check that `http://127.0.0.1:8766/adapter` answers `codex`.
+1. Check that the session has the APPA MCP connection.
+2. Run `appa describe --adapter codex`.
+3. Use the complete path on its `Config:` line as `<policy>` below.
+4. List the tool names that this session can call, including MCP tools.
+5. Run `appa describe --adapter codex --config <policy> --session-tools <name>,<name>,... --check` with those names.
+6. Read the policy, its included batteries, and the READMEs for suggested batteries.
+7. Check that `${APPA_RUNTIME_URL:-http://127.0.0.1:8766}/adapter` answers `codex`.
 
 The `Config:` path from `appa describe --adapter codex` comes from the installation receipt when one exists.
 Without a receipt, the default path is `codex/appa.toml` under the platform APPA config directory.
@@ -22,61 +21,63 @@ The default Codex root policy supplies local tool contracts.
 The installed syntax reference is `references/contracts.md` beside this skill.
 Other MCP batteries need separate setup.
 
+Use the tool names that Codex reports. Do not substitute Claude Code names.
 Do not read secrets or unrelated files.
-Do not use Claude Code tool spellings for Codex.
-Do not describe the session as protected before a manually trusted end-to-end check passes.
+If a command is unsupported or fails, report the exact command and error.
+Do not treat the connection check as proof that every call passes through APPA.
 
 ## Propose and apply
 
-Use the shared router's `init`, `adjust`, and `explain` rules.
-Present the complete behavior in plain English before an edit.
-
-A proposal does not authorize a write.
+Present each proposal in plain English before you ask for approval.
+Wait for approval before you change the policy.
 
 After approval:
 
-1. Re-read the policy and inventory.
-2. Edit only the approved root rules or includes.
-3. Run `appa describe --adapter codex --config <policy> --check`.
-4. Run `appa codex-reload`.
-5. Record the active policy key that the command prints.
-6. Start a new session with `appa codex --`.
-7. Run `appa codex-policy-key`.
-8. Check that its key matches the recorded key before the denial check.
+1. Read the policy and tool list again.
+2. Install approved batteries with `appa battery install <name> --config <policy>`.
+3. Edit only the approved root rules or includes.
+4. Run `appa describe --adapter codex --config <policy> --check`.
+5. Run `appa codex-reload`.
+6. Record the active policy key that the command prints.
+7. Start a new session with `appa codex --`.
+8. Run `appa codex-policy-key`.
+9. Check that its key matches the recorded key before the denial check.
 
 The launcher reconciles the installed policy before it starts Codex.
 It checks the runtime deployment and the active policy key.
 `appa codex-policy-key` reads the active key without a reload.
 A changed policy does not reset the labels of an existing session.
 
-After approval, use `appa battery install <name> --config <policy>` for batteries.
-For a manual root edit, keep comments and unrelated rules.
-Do not edit a battery in place.
+Keep comments and unrelated rules. Do not edit a battery in place.
 
-Explain a denial with the tool's Codex name and the information label or authority that caused it.
-Include any exact remedy offer from the runtime.
+## Explain a blocked call
+
+Name the blocked tool as Codex reports it.
+Explain which rule or approval blocks the call and what must change before it can proceed.
+Include the exact remedy offer if APPA returns one.
 Call `appa/execute_remedy_plan` only with an offer id from the immediately preceding blocked result.
 
-## Coverage limits
+## Limits to report
 
-Codex can skip a hook that fails or lacks trust.
-The startup check cannot guarantee that a later hook will run.
-The wrapper withholds output only after a successful pre-use rewrite.
-Native tool checks can occur before a hook.
-MCP errors can bypass the post-use hook.
+The launcher inherits Codex's shell setting, `features.code_mode_host`.
+Codex CLI 0.159.2 enables the shell by default.
+The launcher checks that commands in the Codex sandbox can reach APPA before it starts Codex.
+The installed `appa` profile allows access to every port on `127.0.0.1`.
+A profile that blocks this connection fails the launch check.
 
-Do not claim that these paths passed a check.
+Each APPA hook runs a policy check.
+The hook supervisor blocks the call if that check crashes, times out, or returns invalid JSON.
+If Codex skips an untrusted hook, or the supervisor fails before its reply, Codex can run the original command.
+The launcher cannot check whether the user trusts the hooks.
 
-The command wrapper needs loopback HTTP access from Codex's command sandbox.
-The installed `appa` profile extends `:workspace` and allows `127.0.0.1` through Codex's proxy.
-That host rule covers all ports on the allowed host.
-The sandbox HTTP check refuses profiles that block the rule.
-The launcher inherits Codex's shell setting and checks runtime HTTP access before it starts Codex.
-The hook supervisor blocks a call if its APPA worker crashes, times out, or returns invalid JSON.
-Codex can run the original command if it skips an untrusted hook or the supervisor fails before its reply.
-Native Windows commands need a separate sandbox and console probe.
+Some native tool checks happen before a hook.
+MCP tool errors can skip the hook that checks the result.
+The command wrapper cannot receive more input after a command starts or support interactive terminal programs.
+Native Windows commands do not have a verified protected path.
 
-Do not disable the filesystem sandbox, allow public hosts, or bypass hook trust to make the HTTP check pass.
+Ask the user to review and trust the APPA hooks through `/hooks`.
+Do not describe a session as protected until a manually trusted end-to-end check passes.
+Do not disable the filesystem sandbox, allow public hosts, or bypass hook trust to pass the launch check.
 
 ## Develop the command classifier hint
 

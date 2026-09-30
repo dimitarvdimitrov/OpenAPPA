@@ -29,7 +29,7 @@ fn the_codex_reference_finds_its_policy_and_requires_a_manual_check() {
     for marker in [
         "appa describe --adapter codex",
         "inherits Codex's shell setting",
-        "APPA worker crashes, times out, or returns invalid JSON",
+        "check crashes, times out, or returns invalid JSON",
         "supervisor fails before its reply",
         "manually trusted end-to-end check",
     ] {

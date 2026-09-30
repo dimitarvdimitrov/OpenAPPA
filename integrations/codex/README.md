@@ -1,36 +1,62 @@
-# Codex proxy compatibility
+# OpenAPPA with Codex
 
-`appa codex --` inherits the user's `code_mode_host` setting.
-It enables hooks for APPA policy checks.
+Use OpenAPPA with Codex CLI to check tool calls against your policy.
+For supported shell commands, APPA holds the output until the policy allows Codex to read it.
+
+## Set up
+
+Install `appa` and Codex CLI on macOS or Linux.
+Sign in to Codex, then run:
+
+```sh
+appa plugin install codex
+```
+
+The installer connects Codex to APPA and adds `/appa-guide` to help you set up your policy.
+Codex uses its own policy and background runtime, separate from Claude Code.
+
+Open Codex and run `/hooks`.
+Review and trust the APPA hooks.
+Exit Codex, then start a session with:
+
+```sh
+appa codex --
+```
+
+Run `/appa-guide init` to check your tools and configure their policies.
+See the [setup and demonstration](DEMO.md) for the full flow and removal steps.
+
+The launcher uses your Codex shell setting, `features.code_mode_host`.
 Codex CLI 0.159.2 enables the shell by default.
-The [host compatibility gate](HOST_MODE_GATE.md) records Codex CLI 0.159.2 behavior.
-The installed hook supervisor blocks a call if the APPA worker crashes, times out, or returns invalid JSON.
-Codex can run the original command if it skips an untrusted hook or the supervisor fails before its reply.
-See the [setup flow](DEMO.md) for hook trust, guide use, and the manual check before a protected-session claim.
+Before Codex starts, the launcher checks that commands in the Codex sandbox can reach APPA.
+The installed `appa` permission profile allows access to every port on `127.0.0.1`.
+It does not allow public hosts, and the filesystem sandbox stays active.
 
-## Probe
+## Limits
 
-Build `appa` with `cargo build -p appa`.
-Run `python3 integrations/codex/proxy_probe.py`.
+The APPA hook blocks a call if the policy check crashes, times out, or returns invalid JSON.
+If Codex skips an untrusted hook, or the hook command itself fails before its reply, Codex can run the original command.
+If an update changes the hooks, you must trust them again through `/hooks`.
+Do not describe a session as protected until a manual end-to-end check passes with those trusted hooks.
 
-The probe uses a temporary project and a temporary Codex profile. It makes no model call.
-It checks the rewritten wrapper, the admitted result, early output, and a forged job handle.
+The command wrapper supports Unix commands that finish without more input.
+It uses `sh`, `bash`, or `zsh`, closes command input, and holds up to 1 MiB of combined output.
+Interactive terminal programs, native Windows commands, and unsupported shell modes are outside this scope.
 
-## Launcher
+Do not use this integration to contain commands that detach and continue in the background.
+Such a command can survive cancellation. APPA cannot reverse its changes.
+The policy must deny these commands until APPA can contain them.
 
-`appa plugin install codex` adds an `appa` permission profile to the active Codex config.
-`appa codex --` selects the profile and checks runtime HTTP access from `codex sandbox` before it starts Codex.
-The profile permits all sandboxed commands to reach all ports on `127.0.0.1`.
-Codex requires a manual `/hooks` review because the launcher cannot verify hook trust through a supported noninteractive interface.
+A runtime restart or a new prompt ends access to previous jobs and their output.
+Stop and Interrupt also end those jobs. Output from a previous job is not released after a runtime restart.
 
-## Scope
+## Compatibility tests
 
-The proxy supports finite Unix commands without later input. It starts the selected `sh`, `bash`, or `zsh` shell without a controlling terminal.
-It closes child stdin and buffers at most 1 MiB of combined output. It checks job status while the child runs.
+The [test results](HOST_MODE_GATE.md) record Codex CLI 0.159.2 behavior on macOS 26.6.2 arm64.
+Those tests used temporary projects and hooks. They did not check a session with hooks manually trusted through `/hooks`.
 
-Native Windows commands, later input, PTY programs, prompts, full-screen tools, daemonized children, and unsupported shell modes remain outside this proxy scope.
-The protected launcher requires a Codex sandbox profile with the disclosed `127.0.0.1` HTTP exception.
-The hook cannot guarantee coverage if Codex skips or disables it.
+The command-input tests found no supported path for more input after a command starts.
+The APPA wrapper keeps that input closed.
 
 ## Execution context
 
@@ -67,26 +93,13 @@ Without an active hook, the header is only a shell comment and supplies no execu
 For a plain command, an explicit `cd /absolute/project/nested` can select a directory within the command itself.
 The header also supplies the correct initial directory to policy context providers.
 
-## Later input on Codex CLI 0.159.2
 
-Tests ran on macOS 26.6.2 arm64 on 30 September 2026.
-A direct `codex sandbox` command received input through a FIFO without echo.
-A disposable model-controlled Codex session then ran the rewritten APPA wrapper.
-Its non-TTY command received EOF before later input arrived.
-Codex returned `write_stdin failed: stdin is closed for this session; rerun exec_command with tty=true to keep stdin open`.
-The terminal retry echoed the synthetic `HELLO` input.
+To check the command wrapper without a model call, run:
 
-This release did not provide a non-echoing pipe for later input in the tested command session.
-The wrapper keeps child stdin closed. Later input is unsupported.
+```sh
+cargo build -p appa
+python3 integrations/codex/proxy_probe.py
+```
 
-## Lifetime and output
-
-A runtime restart invalidates live job handles. Persistent ownership prevents replay.
-The runtime withholds a post-hook after restart because it cannot verify the old turn.
-Stop, Interrupt, and a new prompt close live jobs and block late post-hook acknowledgement.
-
-On cancellation, the wrapper kills the shell process group and ordinary descendants.
-A deliberately daemonized child can escape that group and continue after the wrapper settles indeterminately.
-Codex CLI 0.159.0 also left such a child alive after its parent exited.
-Do not use this proxy to contain daemonized commands. The policy must deny them until process-tree containment exists.
-The wrapper withholds output from an escaped child that retains its pipes. It cannot reverse that child's side effects.
+This test uses a temporary project and Codex profile.
+It checks the command wrapper, output release, and rejection of a forged job handle.

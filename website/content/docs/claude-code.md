@@ -78,7 +78,7 @@ OpenAPPA intercepts Claude Code events through native lifecycle hooks:
 - **Lifecycle interception:** The integration hooks into Claude Code's native lifecycle events (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and subagent events).
 - **Unified tool coverage:** Intercepts both built-in commands (`Bash`, `Read`, `Edit`, `Write`) and all external MCP tools transparently.
 - **Pre-execution evaluation:** Before any tool runs, `PreToolUse` passes the call to the local APPA runtime, evaluating the flow against the session's accumulated labels (`audience × trust`).
-- **Fail-closed with remedies:** Allowed actions execute immediately. Disallowed flows are blocked before execution; OpenAPPA returns the policy conflict along with actionable remedies (such as sanitizer filters or operator approval). If `appa hook` exits with code 2, Claude Code blocks the pending call. If Claude Code skips or times out the hook, the call follows its normal permission flow.
+- **Fail-closed with remedies:** Allowed actions execute immediately. Disallowed flows are blocked before execution; OpenAPPA returns the policy conflict along with actionable remedies (such as sanitizer filters or operator approval). If `appa hook` exits with code 2, Claude Code blocks the pending call. If Claude Code skips the hook or the hook times out, Claude Code uses its usual permission checks.
 - **Session isolation:** `clappa` launches Claude Code with APPA's policy enforcement and status line. Your regular `claude` command remains completely unchanged.
 
 ## Choose protection per session
