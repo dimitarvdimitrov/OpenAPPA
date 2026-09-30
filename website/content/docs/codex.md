@@ -108,6 +108,7 @@ A native `workdir`, `shell`, or `login` option therefore does not reliably selec
 Plain wrapped commands use the hook session directory and the hook's `$SHELL` with `-lc`.
 A login shell can read startup files and change environment values.
 APPA restores the approved directory after shell startup.
+Startup files can still alter the environment or execute commands.
 
 For an explicit context, put this header on the first line of the command:
 
@@ -119,6 +120,8 @@ pwd
 The header requires an existing absolute directory, an existing absolute `sh`, `bash`, or `zsh` path, and a boolean `login` value.
 APPA validates the header before classification and removes it from the command payload that selectors inspect.
 The job preserves the approved directory, shell, and login mode.
+Malformed or conflicting headers cause refusal. Environment overrides and terminal commands remain unsupported.
+Without an active hook, the header is only a shell comment and supplies no execution context.
 `login=false` uses `-c`. `login=true` uses `-lc`.
 
 For a directory change alone, use an explicit command:
@@ -173,6 +176,23 @@ APPA wrapped commands cannot receive later input because the wrapper closes chil
 Interactive terminal programs are unsupported. The wrapper holds up to 100 MiB of combined output.
 Native Windows commands do not have a verified protected path.
 Some native tool checks happen before a hook. MCP tool errors can skip the hook that checks the result.
+
+## Recover an edited APPA hook
+
+An edited or absent APPA hook group prevents launch, reinstallation, or removal.
+The diagnostic identifies the event, hooks path, and installation receipt path.
+Unrelated hook groups remain in place.
+
+1. Back up the hooks file and installation receipt that the diagnostic names.
+2. Compare the affected event with `receipt.hooks[event]`.
+3. Preserve custom values in the backup.
+4. If unrelated hooks share the APPA group, move them into a separate group with their original matcher.
+5. Restore only the affected APPA group from the receipt.
+6. Retry the original command.
+7. After reinstallation, review and trust the updated hooks through `/hooks`.
+
+Do not delete the receipt as a recovery shortcut.
+Reinstallation can duplicate APPA hooks without that ownership record.
 
 ## Uninstall
 
