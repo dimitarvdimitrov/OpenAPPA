@@ -28,7 +28,7 @@ fn the_codex_reference_finds_its_policy_and_requires_a_manual_check() {
     let reference = read("references/codex.md");
     for marker in [
         "appa describe --adapter codex",
-        "features.code_mode_host=true",
+        "inherits Codex's shell setting",
         "APPA worker crashes, times out, or returns invalid JSON",
         "supervisor fails before its reply",
         "manually trusted end-to-end check",
