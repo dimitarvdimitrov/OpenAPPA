@@ -96,6 +96,13 @@ fn direct_codex_activation_reinstall_and_removal_preserve_both_profiles() {
     let hooks: serde_json::Value =
         serde_json::from_slice(&fs::read(fixture.profile().join("codex-home/hooks.json")).unwrap()).unwrap();
     assert_eq!(hooks["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
+    let pre = hooks["hooks"]["PreToolUse"][1]["hooks"][0]["command"].as_str().unwrap();
+    assert!(pre.contains("codex-hook --event PreToolUse"), "{pre}");
+    let start = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(start.contains("codex-hook --event SessionStart"), "{start}");
+    assert!(!start.contains("--ensure-runtime"), "{start}");
     let host_config = fs::read_to_string(fixture.profile().join("codex-home/config.toml")).unwrap();
     assert!(host_config.contains("[mcp_servers.other]"));
     assert!(host_config.contains("[mcp_servers.appa]"));
