@@ -42,7 +42,7 @@ below, so this report does **not** certify a fully protected Codex session.
 
 | Area | State | Work needed to claim support |
 |---|---|---|
-| Ordinary protected shell through `appa codex` | Blocked by the selected host mode | The launcher sets `features.code_mode_host=false`. An isolated Codex 0.159.0 exec with that setting returned `code-mode host is disabled` for a shell request. With it enabled, the synthetic proxy flow worked. Probe all code-mode filesystem/network operations and their hook coverage before changing the launcher, or design the separately planned APPA MCP command route. Then test a manually trusted protected launch. |
+| Ordinary protected shell through `appa codex` | Blocked by the selected host mode | The launcher sets `features.code_mode_host=false`. An isolated Codex 0.159.0 exec with that setting returned `code-mode host is disabled` for a shell request. With it enabled, the synthetic proxy flow worked. Probe all code-mode filesystem/network operations and their hook coverage before changing the launcher, or scope an APPA MCP command route as a new fallback phase. Then test a manually trusted protected launch. |
 | Hook trust and later hook failure | Known host gap | The launcher cannot verify trust noninteractively, and its sandbox handshake does not stop a later crash or timeout. The live failure matrix above demonstrates original-command execution. Coverage docs must keep that limitation explicit. |
 | Result sanitizer and effectful outcomes | Partly tested | Fake HTTP and deterministic tests prove output replacement and nonzero effectful withholding. A live Codex run with a synthetic secret in **both** stdout and stderr, nonzero diagnostics, output overflow, runtime loss at admission, duplicate post, and concurrent actor isolation has not passed. Direct and proxy-routed HTTP were tested separately, but not their full result matrix. |
 | Later stdin and terminal jobs | Unsupported | The child still uses `Stdio::null()`; `host/codex/appa_stdin` is dormant. Implement input authorization, split-input checks, pipe/echo handling and process containment before claiming interaction. |
@@ -52,17 +52,36 @@ below, so this report does **not** certify a fully protected Codex session.
 | Linux and strict/managed profiles | Unverified | The live probes ran only on this macOS build and its filtered-network profile. Linux, network-off, managed restrictions and Windows elevated/unelevated modes need their own observed matrix. |
 | Published release artifacts and full guide flow | Unverified | Local package and guide tests passed. A published binary/bundle and a real `/appa-guide` policy proposal in a manually trusted Codex session were not exercised. |
 
+## Comparison with CLAPPA
+
+The missing rows mix product work, host limits, and validation. CLAPPA uses Claude Code's native Bash tool. It does not own the shell process, its output stream, or later stdin bytes. The original Codex plan requires a stronger command boundary and selects Windows 11 as an initial target. Those requirements extend beyond demonstrated CLAPPA parity.
+
+| Report area | CLAPPA status | Codex gap and size |
+|---|---|---|
+| Ordinary protected shell | Native Bash uses pre- and post-use hooks. APPA has no shell proxy ([hook setup](../../appa-runtime/src/init/settings.rs), [adapter](../../appa-adapter-claude-code/src/parse.rs)). | **Large launch blocker.** A protected shell claim requires a usable host mode and checked coverage of other operations. |
+| Hook trust and failure | APPA blocks a pending call if its client returns code 2. A skipped or timed-out host hook supplies no APPA decision ([client](../../appa-runtime/src/hook_client.rs)). | **Shared host limit.** Codex startup checks cannot prevent a later hook failure. The [failure note](WORKING_NOTES.md) records the tested cases. |
+| Result sanitizer and uncertain effects | The shared runtime tracks uncertain outcomes. CLAPPA replaces normal results when the post-hook arrives ([adapter](../../appa-adapter-claude-code/src/redact.rs)). Failed output lacks full coverage. | **Mainly validation.** Codex has deterministic tests. Live stdout, stderr, overflow, and failure cases remain open. |
+| Later stdin and terminal jobs | CLAPPA does not check each stdin chunk or own a terminal. | **Large optional feature.** The Codex plan requests finite pipe input because later stdin has no new pre-hook. The initial scope can remain finite commands without later input. |
+| MCP error, remedy, resume, and subagents | Remedy and resume use shared runtime code. CLAPPA checks subagent returns ([tests](../../appa-runtime/tests/claude_code_subagent.rs)). | **Mixed.** Remedy and resume need live Codex tests. An MCP error without a post-hook is an accepted host limit. Safe Codex subagents need a separate phase if enabled. |
+| Automated acceptance suite | Claude has Rust tests and a deterministic CLI gate ([CI](../../.github/workflows/ci.yml), [gate](../../marketplace/plugins/claude-code/live-gate-check.py)). | **Medium test work.** The required cases matter more than the exact test filenames. |
+| Native Windows command path | Claude has Windows binary and package checks. Those checks do not prove a protected Windows shell session ([build workflow](../../.github/workflows/build-appa-runtime-binaries.yml)). | **Large Codex-specific phase** if Windows 11 remains an initial target. |
+| Linux and strict or managed profiles | Claude's Linux tests do not test Codex permission profiles or its loopback exception. | **Platform validation.** Linux needs a live sandbox check. Strict and managed profiles that forbid loopback need refusal diagnostics, not support. |
+| Published artifacts and guide flow | Release packaging exists. No live Claude `/appa-guide` proposal test appears in the repository ([release workflow](../../.github/workflows/release.yml)). | **Release validation.** Codex source installation and a local bundle passed. Published artifacts need inspection. The guide flow needs a live test after the shell route works. |
+
+For a first macOS flow with finite commands, the host-mode gate and a manually trusted launch are the main blockers. Live output and denial checks must support the claims for that flow. Stdin, subagents, and native Windows can be separate phases if the initial scope changes. The original plan includes Windows 11 in its initial target.
+
 ## Phase-sized follow-up
 
 1. **Host-mode coverage and protected launch.** Map the enabled code-mode
    operations against synchronous hooks. Either retain a shell route with
-   demonstrated mediation or implement the planned APPA MCP command route.
+   demonstrated mediation or scope a new APPA MCP command route if the proxy
+   route cannot pass its gate.
    Complete a manually trusted `appa codex` edit/test and denial demo before
    claiming a protected session.
-2. **Input, process containment, and result matrix.** Implement gated stdin
-   and containment for escaped descendants, then exercise the remaining
-   sanitizer, failure, retry, concurrency, and resume cases above. The current
-   finite Unix route can be documented as partial during this work.
+2. **Input and process containment.** Gated stdin and containment for escaped
+   descendants require a separate phase if finite later input remains in
+   scope. The sanitizer, failure, retry, concurrency, and resume matrix is
+   separate validation. The current finite Unix route remains partial.
 3. **Native Windows path and handoff.** Implement the command wrapper and
    `windows-validate.ps1`, then run the colleague-assisted live matrix on a
    matching Windows 11 host. Release claims must name the tested architecture
