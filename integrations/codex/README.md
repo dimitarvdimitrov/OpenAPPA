@@ -5,6 +5,8 @@ for the tested scope and remaining work. The protected launcher currently
 disables `code_mode_host`; on Codex CLI 0.159.0 this also disables the shell
 tool, so the full command workflow is not yet supported through `appa codex`.
 
+See [working notes](WORKING_NOTES.md) for the hook failure comparison with Claude Code.
+
 `proxy_probe.py` exercises a runtime-owned Bash job through the installed Codex CLI's command sandbox. Build `appa` first with `cargo build -p appa`, then run `python3 integrations/codex/proxy_probe.py`. The probe creates a temporary project and Codex profile, makes no model call, and reports whether a rewritten wrapper reaches the runtime and releases only the admitted result after completion.
 
 `live_e2e_probe.py` makes one authenticated, synthetic model call through
