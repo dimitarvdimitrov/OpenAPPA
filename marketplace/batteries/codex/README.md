@@ -4,14 +4,22 @@ The Codex plugin includes this battery on first install. It declares the
 runtime-owned `host/codex/appa_exec` child command used by the Bash wrapper.
 Literal credential paths and credential-producing commands narrow the session
 to `self`. Other commands use the saved-login `codex` classifier to decide
-trust, audience, and attention requirements. No API key is needed.
+trust, audience, and attention requirements. The saved login supplies authentication.
+
+Repository commands use a separate classifier with the same instructions as Claude Code.
+The GitHub battery supplies repository visibility and author facts through `context.github`.
+Writes to public or unknown destinations require `public`. Writes to private or internal
+destinations require `internal`. A read preserves the audience and requires evidence about every author before
+its trust can be `trusted`.
 
 The wrapper confines complete stdout and stderr until APPA admits the result.
 The `redact-secrets` sanitizer can mask a withheld result before the model sees
-it. Output appears only after the command completes. A nonzero effectful
-command remains indeterminate with reservations retained, and its diagnostics
-remain withheld. Nonzero commands under the effect-free contract can return
-admitted diagnostics.
+it. Output appears only after the command completes.
+
+Both command classifiers can use effects declared by the deployment. If its annotation
+declares effects, a complete nonzero result remains indeterminate with effect reservations
+retained. Without declared effects, a complete nonzero result
+can return admitted diagnostics. Result admission can still withhold output.
 
 The wrapper starts each child with null stdin. It does not forward later input.
 
@@ -32,5 +40,7 @@ version = 2
 ```
 
 The root can place stricter command rules before the battery. The default root
-also declares `apply_patch` and local utility operations. Shared MCP batteries
-continue to use canonical `mcp/<server>/<tool>` names.
+also declares `apply_patch` and local utility operations. Its patch classifier
+requires fresh `hitl` attention for hook and MCP configuration edits, including
+mixed patches. This requirement depends on the classifier's annotation.
+Shared MCP batteries continue to use canonical `mcp/<server>/<tool>` names.
