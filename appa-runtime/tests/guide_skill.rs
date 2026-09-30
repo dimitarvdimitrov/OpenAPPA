@@ -24,14 +24,14 @@ fn the_router_opens_with_the_frontmatter_the_installer_recognizes() {
 }
 
 #[test]
-fn the_codex_reference_finds_its_policy_and_reports_the_shell_gate() {
+fn the_codex_reference_finds_its_policy_and_requires_a_manual_check() {
     let reference = read("references/codex.md");
     for marker in [
         "appa describe --adapter codex",
         "Config:",
-        "code-mode host is disabled",
-        "report policy inspection as unavailable",
-        "Do not enable the code-mode host",
+        "shell tool available through the code-mode host",
+        "report the exact command and error",
+        "manually trusted end-to-end check",
         "mcp/<server>/<tool>",
     ] {
         assert!(reference.contains(marker), "the Codex guide names {marker:?}");
