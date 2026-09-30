@@ -200,18 +200,29 @@ fn codex_hook_refuses_claude_runtime_auto_start() {
 }
 
 #[test]
-fn codex_runtime_lifecycle_refuses_until_its_deployment_is_available() {
-    for operation in ["ensure", "stop"] {
-        let output = Command::new(built_binary())
+fn codex_runtime_lifecycle_uses_its_selected_endpoint() {
+    let directory = tempfile::tempdir().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+
+    let lifecycle = |operation| {
+        Command::new(built_binary())
             .args(["runtime", "--adapter", "codex", operation])
+            .env("APPA_RUNTIME_URL", &url)
+            .env("APPA_CONFIG_DIR", directory.path().join("config"))
+            .env("APPA_DATA_DIR", directory.path().join("data"))
             .output()
-            .expect("the runtime lifecycle command starts");
-        assert!(
-            !output.status.success(),
-            "{operation} must not act on Claude's endpoint"
-        );
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Codex lifecycle commands"));
-    }
+            .expect("the runtime lifecycle command starts")
+    };
+
+    let ensure = lifecycle("ensure");
+    assert!(!ensure.status.success());
+    assert!(String::from_utf8_lossy(&ensure.stderr).contains(&url));
+
+    let stop = lifecycle("stop");
+    assert!(!stop.status.success(), "a caller-owned endpoint must not be stopped");
+    assert!(String::from_utf8_lossy(&stop.stderr).contains(&url));
 }
 
 /// Exit code, stdout and stderr together, for the tests that assert which channel an

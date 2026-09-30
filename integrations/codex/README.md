@@ -1,5 +1,10 @@
 # Codex proxy compatibility
 
+The [host compatibility gate](HOST_MODE_GATE.md) fails on Codex CLI 0.159.2.
+`appa codex --` refuses protected session starts.
+`code_mode_host=false` removes shell access.
+If the feature is enabled, Codex can run an original command after a failed or untrusted pre-use hook.
+
 ## Probe
 
 Build `appa` with `cargo build -p appa`.
@@ -11,7 +16,7 @@ It checks the rewritten wrapper, the admitted result, early output, and a forged
 ## Launcher
 
 `appa plugin install codex` adds an `appa` permission profile to the active Codex config.
-`appa codex --` selects the profile, enables Codex's filtered network proxy, and runs an HTTP handshake from `codex sandbox` before launch.
+`appa codex --` selects the profile and checks runtime HTTP access from `codex sandbox` before the compatibility refusal.
 The profile permits all sandboxed commands to reach all ports on `127.0.0.1`.
 Codex requires a manual `/hooks` review because the launcher cannot verify hook trust through a supported noninteractive interface.
 

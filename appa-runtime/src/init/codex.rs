@@ -549,9 +549,16 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
         eprintln!("appa codex: {message}");
         return ExitCode::FAILURE;
     }
-    eprintln!(
-        "appa codex: review and trust the installed hooks with /hooks; Codex has no supported noninteractive trust check"
+    let information_only = matches!(
+        arguments.as_slice(),
+        [option] if matches!(option.to_str(), Some("--help" | "-h" | "--version" | "-V"))
     );
+    if !information_only {
+        eprintln!(
+            "appa codex: protected launch refused. The shell requires code_mode_host. Codex can run an original command when its pre-tool hook fails or lacks trust."
+        );
+        return ExitCode::FAILURE;
+    }
     let status = Command::new("codex")
         .args([
             "-c",
@@ -655,7 +662,7 @@ fn forbidden_config_override(value: &str) -> bool {
 fn sandbox_probe(binary: &Path, url: &str, options: &[OsString]) -> Result<(), String> {
     let mut child = Command::new("codex")
         .arg("sandbox")
-        .args(["-P", "appa", "--enable", "network_proxy"])
+        .args(["-P", "appa", "--include-managed-config", "--enable", "network_proxy"])
         .args(options)
         .arg("--")
         .arg(binary)

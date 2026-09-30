@@ -121,3 +121,54 @@ fn direct_codex_activation_reinstall_and_removal_preserve_both_profiles() {
         "{\"theme\":\"dark\"}\n"
     );
 }
+
+#[test]
+fn launcher_refuses_a_session_after_the_sandbox_check() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new();
+    let config = fixture.config.to_str().unwrap();
+    let installed = fixture.command(&["activate-codex", "--config", config]);
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+
+    let bin = fixture.profile().join("fake-bin");
+    fs::create_dir(&bin).unwrap();
+    let fake_codex = bin.join("codex");
+    let calls = fixture.profile().join("codex-calls.txt");
+    fs::write(
+        &fake_codex,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\nif [ \"$APPA_DENY_SANDBOX\" = 1 ]; then exit 1; fi\nexit 0\n",
+            calls.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&fake_codex, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+    let path = std::env::join_paths(paths).unwrap();
+    let launch = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_appa"));
+        command
+            .arg("codex")
+            .env("HOME", fixture.profile())
+            .env("CODEX_HOME", fixture.profile().join("codex-home"))
+            .env("APPA_CONFIG_DIR", fixture.profile().join("config"))
+            .env("APPA_DATA_DIR", fixture.profile().join("data"))
+            .env("APPA_ENDPOINT", &fixture.endpoint)
+            .env("PATH", &path);
+        command
+    };
+    let strict = launch().env("APPA_DENY_SANDBOX", "1").output().unwrap();
+    assert!(!strict.status.success());
+    assert!(String::from_utf8_lossy(&strict.stderr).contains("command sandbox cannot reach"));
+
+    let output = launch().output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("protected launch refused"));
+    assert_eq!(fs::read_to_string(calls).unwrap(), "sandbox\nsandbox\n");
+}
