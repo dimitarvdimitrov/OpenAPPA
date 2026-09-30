@@ -1,6 +1,6 @@
 # Codex host-mode compatibility
 
-The protected launch gate fails on Codex CLI 0.159.2 on macOS 26.6.2 arm64.
+On Codex CLI 0.159.2 for macOS 26.6.2 arm64, an unwrapped shell accepted later input without a new pre-use hook.
 The tested binary SHA-256 is `16593cc2f422d5f398a8e40f550ebbaf1245392528957be342c295920a300704`.
 The probes ran on 30 September 2026 with temporary projects and synthetic data.
 The model probes used the saved login, isolated user configuration, and temporary hook definitions.
