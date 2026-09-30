@@ -30,6 +30,7 @@ COPY appa-runtime appa-runtime
 COPY appa-runtime-api appa-runtime-api
 COPY appa-adapter-amp appa-adapter-amp
 COPY appa-adapter-claude-code appa-adapter-claude-code
+COPY appa-adapter-codex appa-adapter-codex
 COPY appa-adapter-kagent appa-adapter-kagent
 COPY appa-builtin appa-builtin
 COPY appa-eventlog appa-eventlog

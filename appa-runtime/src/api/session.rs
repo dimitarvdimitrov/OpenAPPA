@@ -420,6 +420,7 @@ impl Session {
         }
     }
 
+    #[cfg(feature = "daemon")]
     pub(crate) fn released_call_has_no_effects(&self, call: &ProposedCall) -> bool {
         let Ok(log) = self.inner.log(&self.root) else {
             return false;
