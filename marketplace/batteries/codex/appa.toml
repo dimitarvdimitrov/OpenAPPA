@@ -137,18 +137,6 @@ name = "host/codex/appa_exec"
 description = "Runs one approved child command and returns admitted output."
 annotator = "codex.command-requirements"
 
-# Reserved for a later stdin implementation. The current wrapper starts its
-# child with null stdin and never dispatches this operation.
-[[policy.annotator]]
-name = "codex.stdin-requirements"
-builtin = "codex"
-hint = "Classify the exact input to a running approved child in the context of its original command. Input can trigger writes or publication even when the initial command did not. Require the destination's readers and trusted input for sensitive effects."
-
-[[policy.tool]]
-name = "host/codex/appa_stdin"
-description = "Forwards approved input to a running child command."
-annotator = "codex.stdin-requirements"
-
 # The wrapper buffers stdout and stderr until the runtime admits this result.
 # The sanitizer is offered for a result the session cannot read unchanged.
 [[policy.sanitizer]]
