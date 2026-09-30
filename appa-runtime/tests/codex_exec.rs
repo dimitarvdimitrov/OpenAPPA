@@ -53,7 +53,7 @@ fn wrapper_emits_only_the_admitted_result() {
         assert!(request.contains("/consume"));
         answer(
             &mut socket,
-            serde_json::json!({"command":"printf secret; printf hidden >&2", "shell":"/bin/sh", "cwd":cwd}),
+            serde_json::json!({"command":"printf secret; printf hidden >&2", "shell":"/bin/sh", "login":true, "cwd":cwd}),
         );
         let (mut socket, body) = loop {
             let (mut socket, _) = listener.accept().unwrap();
@@ -106,7 +106,7 @@ fn outer_pipe_input_does_not_reach_the_child_or_echo() {
             &mut socket,
             serde_json::json!({
                 "command":"IFS= read -r input || :; printf '%s' \"$input\"",
-                "shell":"/bin/sh", "cwd":cwd
+                "shell":"/bin/sh", "login":true, "cwd":cwd
             }),
         );
         let (mut socket, body) = loop {
@@ -161,7 +161,7 @@ fn lost_result_admission_never_releases_child_output() {
         assert!(request.contains("/consume"));
         answer(
             &mut socket,
-            serde_json::json!({"command":"printf private-stdout; printf private-stderr >&2", "shell":"/bin/sh", "cwd":cwd}),
+            serde_json::json!({"command":"printf private-stdout; printf private-stderr >&2", "shell":"/bin/sh", "login":true, "cwd":cwd}),
         );
         let (mut socket, _) = listener.accept().unwrap();
         let (request, _) = read_request(&mut socket);
@@ -331,6 +331,122 @@ fn codex_hook_prepares_and_settles_a_runtime_owned_command() {
         "tool_response":"original-result"
     }));
     assert_eq!(late["decision"], "block");
+    let _ = runtime.kill();
+    let _ = runtime.wait();
+}
+
+#[test]
+fn explicit_context_preserves_directory_shell_login_and_credential_selectors() {
+    use std::process::Stdio;
+
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("policy.toml");
+    std::fs::write(&config, "[policy]\nversion = 2\n[[policy.tool]]\nname = \"host/codex/appa_exec(command:cat .env)\"\ndelta = { audience = [\"self\"] }\ntags = [\"credentials\"]\n[[policy.tool]]\nname = \"host/codex/appa_exec\"\n[externals]\ntimeout_ms = 5000\nmax_body_bytes = 65536\n").unwrap();
+    let mut runtime = Command::new(env!("CARGO_BIN_EXE_appa"))
+        .args(["runtime", "--adapter", "codex", "--config"])
+        .arg(&config)
+        .arg("--db")
+        .arg(dir.path().join("appa.db"))
+        .args(["--listen", "127.0.0.1:0"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let url = common::served_url(&mut runtime);
+    let hook = |event: serde_json::Value| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_appa"))
+            .args(["hook", "--adapter", "codex", "--deployment-url", &url])
+            .env("APPA_GATE", "1")
+            .env("SHELL", "/bin/sh")
+            .env_remove("APPA_RUNTIME_URL")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(event.to_string().as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        if !output.status.success() {
+            assert_eq!(output.status.code(), Some(2));
+            assert_eq!(event["hook_event_name"], "PreToolUse");
+            if !output.stdout.is_empty() {
+                let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert!(answer["hookSpecificOutput"]["updatedInput"].is_null(), "{answer}");
+            }
+            return serde_json::json!({"denied":true});
+        }
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        if event["hook_event_name"] == "Stop" {
+            assert!(output.stdout.is_empty());
+            return serde_json::json!({});
+        }
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let nested = dir.path().join("nested ' quoted");
+    std::fs::create_dir(&nested).unwrap();
+    std::fs::write(dir.path().join("selected.txt"), "wrong-root").unwrap();
+    std::fs::write(nested.join("selected.txt"), "nested-result").unwrap();
+    let startup = dir.path().join("bash-startup");
+    std::fs::write(&startup, "export APPA_CWD_STARTUP=loaded\ncd /\n").unwrap();
+    for login in [false, true] {
+        let metadata = serde_json::json!({"workdir": nested, "shell": "/bin/bash", "login": login});
+        let command = format!(
+            "# appa-codex-exec-v1 {metadata}\nprintf '%s\\n' \"$0\"; if shopt -q login_shell; then printf 'login\\n'; else printf 'plain\\n'; fi; printf '%s\\n' \"${{APPA_CWD_STARTUP-absent}}\"; pwd; cat selected.txt"
+        );
+        let pre = hook(serde_json::json!({
+            "hook_event_name":"PreToolUse", "session_id":"s1", "tool_name":"Bash",
+            "tool_use_id":format!("context-{login}"), "cwd":dir.path(), "tool_input":{"command":command}
+        }));
+        assert_eq!(pre["hookSpecificOutput"]["permissionDecision"], "allow", "{pre}");
+        let wrapper = pre["hookSpecificOutput"]["updatedInput"]["command"].as_str().unwrap();
+        let result = Command::new("/bin/sh")
+            .args(["-c", wrapper])
+            .env("BASH_ENV", &startup)
+            .env_remove("HTTP_PROXY")
+            .env_remove("http_proxy")
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let actual = String::from_utf8(result.stdout).unwrap();
+        assert!(
+            actual.starts_with(if login {
+                "/bin/bash\nlogin\n"
+            } else {
+                "/bin/bash\nplain\n"
+            }),
+            "{actual}"
+        );
+        assert!(actual.contains(nested.to_str().unwrap()), "{actual}");
+        assert!(actual.contains("\nloaded\n"), "the startup file did not run: {actual}");
+        assert!(actual.ends_with("nested-result"), "{actual}");
+        assert!(!actual.contains("wrong-root"));
+    }
+    // Exact credential selectors must see the payload without the metadata header.
+    let metadata = serde_json::json!({"workdir": nested, "shell": "/bin/bash", "login": false});
+    for (id, command) in [
+        ("credentials-plain", "cat .env".to_owned()),
+        (
+            "credentials-context",
+            format!("# appa-codex-exec-v1 {metadata}\ncat .env"),
+        ),
+        ("context-invalid", "# appa-codex-exec-v1 {}\nprintf never".to_owned()),
+    ] {
+        let denied = hook(serde_json::json!({
+            "hook_event_name":"PreToolUse", "session_id":"s1", "tool_name":"Bash",
+            "tool_use_id":id, "cwd":dir.path(), "tool_input":{"command":command}
+        }));
+        assert!(
+            denied["denied"] == true || denied["hookSpecificOutput"]["permissionDecision"] == "deny",
+            "{denied}"
+        );
+        assert!(denied["hookSpecificOutput"]["updatedInput"].is_null(), "{denied}");
+    }
+
     let _ = runtime.kill();
     let _ = runtime.wait();
 }

@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::Runtime;
 
+use super::context::Specification;
+
 const LIFETIME: Duration = Duration::from_secs(600);
 const MAX_JOBS: usize = 128;
 const MAX_RECENT_JOBS: usize = 512;
@@ -32,9 +34,7 @@ struct Job {
     actor: Actor,
     call: ProposedCall,
     call_id: String,
-    command: String,
-    shell: String,
-    cwd: String,
+    specification: Specification,
     wrapper: String,
     created: Instant,
     state: JobState,
@@ -46,13 +46,6 @@ enum JobState {
     Reporting,
     Settled(Admission),
     Cancelled,
-}
-
-#[derive(Clone, Serialize)]
-pub(crate) struct Specification {
-    pub command: String,
-    pub shell: String,
-    pub cwd: String,
 }
 
 #[derive(Deserialize)]
@@ -90,7 +83,7 @@ impl Jobs {
         event: &HookEvent,
         binary: &std::path::Path,
         url: &str,
-        shell: &str,
+        specification: Specification,
     ) -> Result<String, String> {
         if !cfg!(unix) {
             return Err("the buffered Codex command wrapper is currently supported on Unix only".into());
@@ -106,45 +99,6 @@ impl Jobs {
         };
         if call.tool != "host/codex/appa_exec" {
             return Err("the call is not a Codex command".into());
-        }
-        let arguments: serde_json::Value =
-            serde_json::from_str(call.arguments.get()).map_err(|_| "the Codex command arguments are invalid")?;
-        let command = arguments
-            .get("command")
-            .and_then(serde_json::Value::as_str)
-            .filter(|command| !command.is_empty() && !command.contains('\0'))
-            .ok_or("the Codex command is missing")?;
-        if arguments.get("tty").and_then(serde_json::Value::as_bool) == Some(true) {
-            return Err("terminal commands are outside the buffered Codex command path".into());
-        }
-        let cwd = call
-            .cwd
-            .as_deref()
-            .ok_or("the Codex hook supplied no working directory")?;
-        if arguments
-            .get("shell")
-            .is_some_and(|value| value.as_str() != Some(shell))
-            || arguments
-                .get("login")
-                .is_some_and(|value| value.as_bool() != Some(true))
-            || arguments
-                .get("workdir")
-                .is_some_and(|value| value.as_str() != Some(cwd))
-            || arguments.get("env").is_some()
-        {
-            return Err(
-                "the Codex command requests shell or environment semantics the wrapper cannot reproduce".into(),
-            );
-        }
-        let shell_path = Path::new(shell);
-        if !shell_path.is_absolute()
-            || !matches!(
-                shell_path.file_name().and_then(|name| name.to_str()),
-                Some("sh" | "bash" | "zsh")
-            )
-            || !shell_path.is_file()
-        {
-            return Err("the Codex command shell is missing or unsupported".into());
         }
         let binary = binary.to_str().ok_or("the APPA binary path is not UTF-8")?;
         if !url.starts_with("http://127.0.0.1:") {
@@ -200,9 +154,7 @@ impl Jobs {
                 actor: actor.clone(),
                 call: call.clone(),
                 call_id: call_id.clone(),
-                command: command.to_owned(),
-                shell: shell.to_owned(),
-                cwd: cwd.to_owned(),
+                specification,
                 wrapper: wrapper.clone(),
                 created: Instant::now(),
                 state: JobState::Pending,
@@ -218,11 +170,7 @@ impl Jobs {
             return None;
         }
         job.state = JobState::Running;
-        Some(Specification {
-            command: job.command.clone(),
-            shell: job.shell.clone(),
-            cwd: job.cwd.clone(),
-        })
+        Some(job.specification.clone())
     }
 
     pub(crate) fn settled(&self, actor: &Actor, call_id: &str, command: &str) -> bool {
@@ -375,7 +323,7 @@ impl Jobs {
     }
 }
 
-fn shell_literal(value: &str) -> String {
+pub(crate) fn shell_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
@@ -403,9 +351,12 @@ mod tests {
                 actor: actor.clone(),
                 call,
                 call_id: "call".into(),
-                command: "sleep 5".into(),
-                shell: "/bin/sh".into(),
-                cwd: "/tmp".into(),
+                specification: Specification {
+                    command: "sleep 5".into(),
+                    shell: "/bin/sh".into(),
+                    cwd: "/tmp".into(),
+                    login: true,
+                },
                 wrapper: "wrapper".into(),
                 created: Instant::now(),
                 state: JobState::Running,
