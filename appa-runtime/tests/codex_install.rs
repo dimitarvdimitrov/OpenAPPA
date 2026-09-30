@@ -239,15 +239,18 @@ fn launcher_inherits_host_mode_after_the_sandbox_check() {
 }
 
 #[test]
+#[cfg(feature = "daemon")]
 fn terminal_footer_tracks_labels_and_restores_the_terminal() {
     terminal_footer_case(false);
 }
 
 #[test]
+#[cfg(feature = "daemon")]
 fn terminal_footer_restores_the_terminal_after_a_signal() {
     terminal_footer_case(true);
 }
 
+#[cfg(feature = "daemon")]
 fn terminal_footer_case(interrupt: bool) {
     appa_runtime::tls::install_crypto_provider();
     use std::os::unix::fs::PermissionsExt;
