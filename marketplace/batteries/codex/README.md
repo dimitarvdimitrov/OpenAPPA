@@ -9,17 +9,19 @@ trust, audience, and attention requirements. No API key is needed.
 The wrapper confines complete stdout and stderr until APPA admits the result.
 The `redact-secrets` sanitizer can mask a withheld result before the model sees
 it. Output appears only after the command completes. A nonzero effectful
-command remains indeterminate with reservations retained; its admitted
-diagnostics can still be shown.
+command remains indeterminate with reservations retained, and its diagnostics
+remain withheld. Nonzero commands under the effect-free contract can return
+admitted diagnostics.
 
-Later nonempty stdin is a separate `host/codex/appa_stdin` call. Its classifier
-checks the exact input and the running command context before the wrapper
-forwards bytes. Empty polls do not add new input.
+The policy reserves `host/codex/appa_stdin` for later input checks. The current
+wrapper starts each child with null stdin and does not forward later input.
+
+Supply finite input in the original command. Do not rely on interactive prompts.
 
 Selectors match the command text, not every command's resolved file path or
 runtime behavior. Shell expansions, aliases, and scripts rely on the
-classifier. The Codex default leaves unknown hooked tools and subagent
-operations undeclared until their host behavior has passed a live gate.
+classifier. The Codex default leaves unknown hooked tools undeclared. It keeps
+subagents disabled until a checked return path passes a real host test.
 
 For a custom root policy, include the battery with:
 
