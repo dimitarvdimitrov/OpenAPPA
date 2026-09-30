@@ -32,7 +32,9 @@ Your other hooks, MCP servers, and permission profiles stay in place.
 4. Exit Codex.
 
 Hooks let Codex ask APPA whether a tool call is allowed.
-Codex can skip hooks that you do not trust. If an update changes the hooks, you must trust them again.
+If you do not trust the APPA hooks through `/hooks`, Codex can skip APPA checks and run commands without APPA protection.
+
+If an update changes the hooks, trust the updated hooks through `/hooks` before you start a session.
 
 Start a session with:
 
@@ -53,27 +55,124 @@ The guide finds your Codex policy and checks the tools and MCP servers in the se
 It explains which tools have rules and proposes [batteries](/batteries) or rules for the rest.
 You review each proposal before the guide changes your policy.
 
-Start a new `appa codex --` session to use an updated policy.
+The launcher reloads the installed policy before each new session.
+For an explicit reload, run `appa codex-reload` and record its active policy key.
+After the reload, start a new `appa codex --` session.
+`appa codex-policy-key` reads the active key without a reload.
+Existing sessions retain their information labels.
+
+The installation receipt selects the policy path for `appa describe --adapter codex`.
+An explicit `--config` overrides that selection.
+Codex discovery covers the supplied session tools. It does not identify every configured MCP connection.
+`MCP servers: none` does not prove that the Codex configuration contains no servers.
 Use `/appa-guide explain` to understand a blocked call and the available ways to continue.
+
+## Default coverage and the first web call
+
+The Codex battery supplies command contracts.
+The default root supplies contracts for patches, local images, plans, and the recorded local `webrun` route.
+Other hooked tools use a wildcard classifier with the complete canonical call and arguments.
+Explicit contracts take precedence. Classification does not automatically permit a call.
+Failed, missing, malformed, or timed-out annotations cause refusal.
+Subagent and peer routes remain explicitly blocked until lifecycle verification.
+
+The local `web__run` callable maps to `host/codex/webrun`.
+Its contract requires a `public` audience and labels the result `suspicious`.
+The first web call can require acceptance of that trust restriction before execution.
+Hosted `WebSearch` can bypass hooks, so this contract does not establish its protection.
+Apps, browser use, and `--search` remain available under Codex's configuration, but availability does not prove APPA coverage.
+
+1. Start with a public query through the local `web__run` route.
+2. If APPA blocks the call, run `/appa-guide explain`.
+3. Review the offered acceptance remedy and its trust restriction.
+4. Use only the offer id from that blocked result with `execute_remedy_plan`.
+
+Local inspection can also restrict a session's audience.
+For example, `ls -la .` or `cat appa.toml` can require acceptance or sanitization before APPA releases the result.
+An accepted audience restriction remains in that session and can prevent a later public web query.
+
+1. If inspection stops, run `/appa-guide explain`.
+2. Review the acceptance or sanitization plan that APPA returns.
+3. Execute only the exact plan that you select from the current remedy offer.
+
+For a refused-tool proposal, ask `/appa-guide adjust` about a refused MCP tool such as `mcp__example__search`.
+The guide checks the inventory and proposes a maintained battery or a root contract for `mcp/example/search`.
+Its proposal states the source trust, destination audience, and necessary approval.
+You review the complete proposal before the guide writes it, reloads the policy, and starts a new session.
+A missing classifier answer remains a refusal until classification succeeds or an approved explicit contract covers the call.
+
+## Command directory and shell
+
+Codex can omit native `exec_command` options from hook events.
+A native `workdir`, `shell`, or `login` option therefore does not reliably select APPA's wrapped execution context.
+Plain wrapped commands use the hook session directory and the hook's `$SHELL` with `-lc`.
+A login shell can read startup files and change environment values.
+APPA restores the approved directory after shell startup.
+
+For an explicit context, put this header on the first line of the command:
+
+```sh
+# appa-codex-exec-v1 {"workdir":"/absolute/project/nested","shell":"/bin/bash","login":false}
+pwd
+```
+
+The header requires an existing absolute directory, an existing absolute `sh`, `bash`, or `zsh` path, and a boolean `login` value.
+APPA validates the header before classification and removes it from the command payload that selectors inspect.
+The job preserves the approved directory, shell, and login mode.
+`login=false` uses `-c`. `login=true` uses `-lc`.
+
+For a directory change alone, use an explicit command:
+
+```sh
+cd /absolute/project/nested && pwd
+```
+
+This alternative retains the default shell and login mode.
+The wrapper closes child stdin and does not forward later input.
+Codex supports later input through `write_stdin` when an unwrapped execution session keeps stdin open.
+
+## Check protection in a test project
+
+1. Open a test project directory.
+2. Start a session with `appa codex -- -C .`.
+3. Check that `/hooks` lists the APPA hooks as trusted.
+4. Ask Codex to run `printf 'appa-shell-check\n'` with its shell tool.
+5. Ask the guide to check that APPA checked the shell command and its output.
+6. Ask the guide to propose a temporary rule that blocks a write to a test file.
+7. Review the proposal before you approve it.
+8. Run `appa codex-reload` after the guide applies the rule.
+9. Record the active policy key that the command prints.
+10. Start a new `appa codex -- -C .` session.
+11. Run `appa codex-policy-key`.
+12. Check that its key matches the recorded key.
+13. Ask Codex to write that test file.
+14. Check that Codex reports the denial and that the file does not exist.
+15. Ask the guide to remove the temporary rule after your approval.
+16. Reload the policy and start a new session.
+17. Record the CLI release from `codex --version`, platform, Codex profile, commands, and results.
+
+A printed marker alone does not prove that APPA checked the command.
+
+Do not describe the session as protected until this check passes.
+Use hooks that you manually trust through `/hooks`.
+If the guide cannot establish that APPA checked a call, record that step as incomplete.
 
 ## Limits to know
 
 The APPA hook blocks a call if the policy check crashes, times out, or returns invalid JSON.
-If Codex skips an untrusted hook, or the hook command itself fails before its reply, Codex can run the original command.
+If you do not trust the APPA hooks through `/hooks`, Codex can skip APPA checks and run commands without APPA protection.
+If the hook command fails before it replies, Codex can also run the original command without an APPA check.
 
 The launcher cannot check whether you trust the hooks.
-Do not describe a session as protected until an end-to-end check passes with hooks that you manually trust through `/hooks`.
-The [setup and demonstration](https://github.com/archestra-ai/OpenAPPA/blob/main/integrations/codex/DEMO.md) explains the check.
 
 The installed `appa` permission profile allows access to every port on `127.0.0.1`.
 It does not allow public hosts, and the filesystem sandbox stays active.
 Strict or managed profiles that block this connection cannot start through the launcher.
 
-Commands cannot receive more input after they start. Interactive terminal programs are unsupported.
+APPA wrapped commands cannot receive later input because the wrapper closes child stdin and does not forward input.
+Interactive terminal programs are unsupported. The wrapper holds up to 100 MiB of combined output.
 Native Windows commands do not have a verified protected path.
 Some native tool checks happen before a hook. MCP tool errors can skip the hook that checks the result.
-
-The [tests on Codex CLI 0.159.2](https://github.com/archestra-ai/OpenAPPA/blob/main/integrations/codex/HOST_MODE_GATE.md) did not check a session with hooks manually trusted through `/hooks`.
 
 ## Uninstall
 
