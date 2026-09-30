@@ -1350,7 +1350,7 @@ Each request starts a new `claude -p` process. It cannot use tools, load project
 | Field | Purpose |
 |---|---|
 | `command` | Selects the executable. Default: `codex`. |
-| `model` | Selects a model in the installed CLI's bundled catalog. If omitted, Codex selects the first picker-visible model in that catalog; set this field to pin a particular model. |
+| `model` | Selects a model in the installed CLI's bundled catalog. If omitted, Codex selects the catalog default. An explicit value pins a particular model. |
 | `timeout_ms` | Sets the timeout for one request, including its wait for a free slot. Default: 60,000. |
 | `max_concurrent` | Sets how many requests the runtime runs at once. Default: 4. |
 

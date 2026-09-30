@@ -13,7 +13,7 @@ Coding agents move data through the filesystem, the shell, and subagents, not on
 | [Isolated file processing](#isolated-file-processing) | Runs a command on declared input files in a sandbox and labels its output with every input's Label. | Experimental, opt-in |
 | [Shell and native file tools](#shell-and-native-file-tools) | Narrows the session when the agent touches credentials, and asks before it edits the harness settings or the policy. | Default in the Claude Code install |
 | [Subagent return checks](#subagent-return-checks) | Checks what a subagent's final message can carry back to the main agent. | Default in the Claude Code install |
-| [Protected sessions](#protected-sessions) | Protects the sessions you start with `clappa`, and fails closed when the runtime is down. | Default in the Claude Code install |
+| [Protected sessions](#protected-sessions) | Checks sessions started with `clappa`, subject to the host hook limits below. | Default in the Claude Code install |
 
 ## File taint tracking
 
@@ -213,4 +213,9 @@ Claude Code ends a subagent that declares `maxTurns` without the return check. S
 
 The Claude Code install protects only the sessions you ask it to protect. Start `clappa` for a protected session and `claude` for a normal one. Protection is fixed when the session starts, so the agent cannot turn it off during the session.
 
-A protected session fails closed. While the runtime is down, every hooked action is blocked. The status line shows the session's current trust and audience, so you can see when a read has narrowed it. The [Claude Code guide](/claude-code) covers install, policy setup, and a first blocked flow.
+A valid hook denial blocks the action. A host can skip an untrusted hook or continue after a hook timeout or failure.
+A runtime outage therefore does not guarantee that every action stops.
+
+The status line shows the session's current trust and audience.
+The [Claude Code guide](/claude-code) explains installation, policy setup, and hook limits.
+The [Codex guide](/codex) explains its separate supervisor and command wrapper.

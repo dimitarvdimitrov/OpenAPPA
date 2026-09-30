@@ -4,14 +4,20 @@ This document defines parity between appa-guide on Claude Code, Codex,
 and kagent. The shared router in `SKILL.md` owns these invariants. Host
 references implement them through different tools.
 
-Codex follows the local-file proposal and approval flow in the Claude Code
-column, using `appa describe --adapter codex` and its separate policy path.
-The Codex reference lists hook trust, command sandbox, and MCP-result gaps;
-those cases must be reported as unprotected rather than counted as parity.
+Codex follows the local policy proposal and approval flow in the Claude Code column.
+It uses `appa describe --adapter codex` and a separate runtime.
+This contract defines intended parity. Static text checks do not establish equivalent host behavior.
 
-Parity does not require identical tool calls or prose. It requires the
-same policy meaning, operator decision points, fail-closed behavior, and
-reported outcome for equivalent installed tools and configuration.
+Codex has these qualifications:
+
+- Discovery covers supplied session tools. It cannot establish the complete set of configured MCP servers or identify every absent connection.
+- The adapter translates callable aliases into canonical policy identities. Coverage and proposed rules must use those identities.
+- The installation receipt selects the policy unless `--config` overrides it. A guide must also check the runtime deployment and active policy key.
+- The installer supplies `references/contracts.md` and the command classifier procedure. Their presence does not establish successful policy updates in every host environment.
+- Hook trust, skipped hooks, sandbox access, and MCP error results limit protection. Unsupported paths require an explicit report.
+
+Parity requires the same policy meaning, operator decisions, and reported outcome for equivalent tools and configuration.
+Behavioral evidence must establish each host's actual policy admission and result handling.
 
 ## Required invariants
 
@@ -37,18 +43,19 @@ reported outcome for equivalent installed tools and configuration.
 
 | ID | Difference | Required handling |
 |---|---|---|
-| X01 | Discovery transport | Claude Code reads local process and session configuration. kagent reads Kubernetes and Helm resources. Both must produce the same semantic inventory. |
+| X01 | Discovery transport | Claude Code reads local process and session configuration. kagent reads Kubernetes and Helm resources. Codex reports supplied session tools and the limits of configured-server discovery. |
 | X02 | Mutation transport | Claude Code edits local files. kagent calls vouched runtime management MCP tools; Agent lifecycle uses complete CR manifests. Both require approval and post-write verification. |
 | X03 | Human-review channel | Claude Code uses its host permission channel. kagent uses the Approve/Reject card reached through an exact remedy offer. Neither host may infer approval. |
 | X04 | Runtime topology | Claude Code normally reaches a local runtime. kagent reaches one or more Services. Each serving runtime must be independently identified and verified. |
 | X05 | Harness limitations | kagent may lack a gateable boundary for a feature. The guide must refuse or label that feature unsupported; it may never weaken the policy silently. |
 
-No other host difference may weaken an invariant. Add a new exception here
-and a regression before relying on it.
+The rule “No other host difference may weaken an invariant” applies to the intended contract.
+
+Before a new exception applies, document it here and add a regression.
 
 ## Regression evidence
 
-- `appa-runtime/tests/guide_parity.rs` locks this contract and both host mappings.
+- `appa-runtime/tests/guide_parity.rs` checks invariant identifiers and static host mappings. It does not establish equivalent behavior.
 - `appa-runtime/tests/guide_skill.rs` locks canonical packaging, proposal,
   approval, policy, and chart instructions.
 - `appa-runtime/src/mcp.rs` tests deterministic battery matching and included
@@ -64,8 +71,8 @@ and a regression before relying on it.
 
 ## Completion rule
 
-A parity change is complete only when the shared invariant, both host
-mappings, static regression, behavioral regression, and relevant live host
-workflow all pass. A platform limitation is complete only when it is listed
-under allowed differences and the affected host fails closed or reports it as
+A parity change requires checks for the shared invariant, every affected host mapping, static regressions, behavioral regressions, and the relevant live workflow.
+A platform limitation requires an explicit exception.
+The affected host fails closed or reports it as
 unsupported.
+Codex manual hook trust and cancellation lack equivalent live evidence in this audit.
