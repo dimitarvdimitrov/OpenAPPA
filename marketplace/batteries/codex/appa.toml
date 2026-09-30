@@ -137,9 +137,8 @@ name = "host/codex/appa_exec"
 description = "Runs one approved child command and returns admitted output."
 annotator = "codex.command-requirements"
 
-# Later nonempty input is a separate proposed operation. The wrapper must
-# supply the exact bytes and the running child context before forwarding any
-# of them; an empty poll does not create this call.
+# Reserved for a later stdin implementation. The current wrapper starts its
+# child with null stdin and never dispatches this operation.
 [[policy.annotator]]
 name = "codex.stdin-requirements"
 builtin = "codex"
