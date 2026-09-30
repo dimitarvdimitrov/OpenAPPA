@@ -84,7 +84,7 @@ digest = "sha256:99d7492a5b8e2b9b3b45d201f1b2225a831cdaa256ed05f6840848d81afca37
 
 [packages.plugin.claude-code]
 path = "plugins/claude-code"
-digest = "sha256:08f3b00886c78ee32f2b8f53292bb8840cf73ea34adc14af27b2a0d6441c120d"
+digest = "sha256:0cb851494e4225daa060fbe3b9fb9975ad2cf04de6e38905b38b38f8c8731d2b"
 
 [packages.plugin.codex]
 path = "plugins/codex"
