@@ -16,6 +16,7 @@ SPEC.loader.exec_module(CONTEXT)
 Target = CONTEXT.Target
 Listing = CONTEXT.Listing
 PREFIX, WHOLE, UNKNOWN = CONTEXT.PREFIX, CONTEXT.WHOLE, CONTEXT.UNKNOWN
+SHELL_TOOLS = ("host/claude-code/Bash", "host/codex/appa_exec")
 
 
 def bash(command, cwd=None, tool="host/claude-code/Bash"):
@@ -147,6 +148,13 @@ class Loopback:
 
 
 class CallsThatReachNothing(unittest.TestCase):
+    def test_an_unrelated_appa_exec_identity_has_no_target(self):
+        for tool in ("appa_exec", "host/other/appa_exec", "mcp/other/appa_exec", "host/codex/appa_exec_extra"):
+            with self.subTest(tool=tool):
+                artifact = bash("gh pr view 12 -R acme/widget", tool=tool)
+                self.assertEqual(CONTEXT.call_targets(artifact), [])
+                self.assertIsNone(CONTEXT.context_of(consult(artifact)))
+
     def test_a_call_that_names_no_github_place_has_no_target(self):
         for artifact in [
             {"tool": "host/claude-code/Read", "arguments": {"file_path": "README.md"}},
@@ -194,6 +202,17 @@ class McpTargets(unittest.TestCase):
 class GhTargets(unittest.TestCase):
     def targets(self, command, cwd="/w"):
         return CONTEXT.bash_targets(command, cwd)
+
+    def test_shell_tools_resolve_the_same_explicit_repository_targets(self):
+        for tool in (*SHELL_TOOLS, "Bash"):
+            for command in (
+                "gh pr view 12 --repo acme/widget",
+                "GH_REPO=acme/widget gh pr view 12",
+                "gh pr view https://github.com/acme/widget/pull/12",
+                "gh api repos/acme/widget/pulls/12",
+            ):
+                with self.subTest(tool=tool, command=command):
+                    self.assertEqual(CONTEXT.call_targets(bash(command, "/w", tool)), slug("acme/widget", 12))
 
     def test_a_gh_call_chooses_its_repository_by_flag_or_environment(self):
         for command in (
@@ -397,18 +416,29 @@ class Checkouts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             for arguments in (["init", "-q", "-b", "main"], ["remote", "add", "origin", "git@github.com:acme/widget.git"]):
                 subprocess.run(["git", "-C", directory, *arguments], check=True, capture_output=True)
-            self.assertEqual(CONTEXT.reached(CONTEXT.call_targets(bash("gh pr view 12 --comments", directory))), ("acme/widget", 12, None))
-            self.assertEqual(CONTEXT.reached(CONTEXT.call_targets(bash("git push && gh pr create --fill", directory))), ("acme/widget", None, None))
-            with self.assertRaises(CONTEXT.Unfollowable):
-                CONTEXT.reached(CONTEXT.call_targets(bash("git push && gh pr create --repo acme/other", directory)))
-            with self.assertRaises(CONTEXT.Unfollowable):
-                CONTEXT.reached(CONTEXT.call_targets(bash("gh pr view 1 && gh issue view 2", directory)))
+            for tool in SHELL_TOOLS:
+                for command, number in (
+                    ("gh pr view 12 --comments", 12),
+                    ("git push origin main", None),
+                    ("git push && gh pr create --fill", None),
+                    ("cd . && gh pr view 12", 12),
+                    ("git -C . push origin main", None),
+                ):
+                    with self.subTest(tool=tool, command=command):
+                        self.assertEqual(CONTEXT.reached(CONTEXT.call_targets(bash(command, directory, tool))), ("acme/widget", number, None))
+                for command in (
+                    "git push && gh pr create --repo acme/other",
+                    "gh pr view 1 && gh issue view 2",
+                ):
+                    with self.subTest(tool=tool, command=command), self.assertRaises(CONTEXT.Unfollowable):
+                        CONTEXT.reached(CONTEXT.call_targets(bash(command, directory, tool)))
 
     def test_a_directory_that_is_no_checkout_is_unfollowable(self):
         with tempfile.TemporaryDirectory() as empty:
-            for cwd in (empty, None, "relative/path"):
-                with self.assertRaises(CONTEXT.Unfollowable):
-                    CONTEXT.reached(CONTEXT.call_targets(bash("gh pr view 12", cwd)))
+            for tool in SHELL_TOOLS:
+                for cwd in (empty, None, "relative/path"):
+                    with self.subTest(tool=tool, cwd=cwd), self.assertRaises(CONTEXT.Unfollowable):
+                        CONTEXT.reached(CONTEXT.call_targets(bash("gh pr view 12", cwd, tool)))
         self.assertEqual(CONTEXT.reached(CONTEXT.call_targets(bash("gh pr view 12 -R acme/api"))), ("acme/api", 12, None))
 
 
@@ -739,6 +769,19 @@ class ListingAnswers(unittest.TestCase):
 class Envelope(unittest.TestCase):
     def run_script(self, request, env):
         return subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(request), capture_output=True, text=True, env=env)
+
+    def test_shell_tools_return_the_same_visibility_and_provenance(self):
+        for tool in SHELL_TOOLS:
+            for command, payload, repo, number in (
+                ("gh pr view 12 -R acme/widget --comments", PULL_REQUEST_PAYLOAD, "acme/widget", 12),
+                ("gh issue view 7 --repo acme/billing", ISSUE_PAYLOAD, "acme/billing", 7),
+            ):
+                with self.subTest(tool=tool, command=command):
+                    with Loopback(200, payload) as github:
+                        result = self.run_script(consult(bash(command, tool=tool)), github.env())
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(github.seen, [("/graphql", "Bearer ghp-fixture", CONTEXT.variables_of(repo, number))])
+                    self.assertEqual(json.loads(result.stdout), {"version": 1, "answer": CONTEXT.answer_of(payload)})
 
     def test_a_call_that_reaches_nothing_answers_null_without_a_token(self):
         with tempfile.TemporaryDirectory() as empty:

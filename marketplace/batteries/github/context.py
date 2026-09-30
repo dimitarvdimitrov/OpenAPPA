@@ -9,13 +9,20 @@ the harness would run it in), one answer out:
                             "pull_request" | "issue": {...},
                             "issues" | "pull_requests": {...}}}
 
-Two kinds of call are recognized. A `Bash` call is split into its simple
-commands; each `gh` call and `git push` names its repository by
-`--repo`/`-R`, `GH_REPO`, a `repos/OWNER/NAME` API path, a GitHub URL, a
-remote, or the checkout (read from the checkout's git config, never the
-network), and a pull request or issue by its number or URL. A
-`mcp/github/<tool>` call names it by `owner`, `repo`, and `pullNumber` or
-`issue_number`. Every other call answers `null` before any network.
+The provider recognizes MCP and shell calls. Shell calls use `Bash` or
+`host/codex/appa_exec`. The provider splits each shell call into simple
+commands. Each `gh` call and `git push` names its repository with one of
+these sources:
+
+- `--repo`/`-R` or `GH_REPO`
+- A `repos/OWNER/NAME` API path or a GitHub URL
+- A remote or the checkout's Git configuration
+
+The provider reads Git configuration locally, without network access.
+A number or URL names a pull request or issue. A `mcp/github/<tool>`
+call names the repository with `owner` and `repo`. It names an item with
+`pullNumber` or `issue_number`. Every other call answers `null` before
+any network access.
 
 A listing (`gh issue list`, `gh pr list`, `list_issues`,
 `list_pull_requests`) is repeated through GraphQL with the call's
@@ -525,7 +532,7 @@ def call_targets(artifact):
     if tool.startswith("mcp/github/"):
         target = mcp_target(tool, arguments)
         return [target] if target else []
-    if tool.rsplit("/", 1)[-1] != "Bash":
+    if tool.rsplit("/", 1)[-1] != "Bash" and tool != "host/codex/appa_exec":
         return []
     command = arguments.get("command")
     if not isinstance(command, str) or not MENTIONS_GIT.search(command):
