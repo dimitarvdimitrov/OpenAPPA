@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use common::repo_root;
 
@@ -46,17 +46,21 @@ impl Fixture {
         Self { root, config, endpoint }
     }
 
-    fn command(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_appa"))
+    fn process(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_appa"));
+        command
             .args(args)
             .env("HOME", self.root.path())
             .env("CODEX_HOME", self.root.path().join("codex-home"))
             .env("CLAUDE_CONFIG_DIR", self.root.path().join("claude-home"))
             .env("APPA_CONFIG_DIR", self.root.path().join("config"))
             .env("APPA_DATA_DIR", self.root.path().join("data"))
-            .env("APPA_ENDPOINT", &self.endpoint)
-            .output()
-            .unwrap()
+            .env("APPA_ENDPOINT", &self.endpoint);
+        command
+    }
+
+    fn command(&self, args: &[&str]) -> Output {
+        self.process(args).output().unwrap()
     }
 
     fn profile(&self) -> &Path {
@@ -109,6 +113,15 @@ fn direct_codex_activation_reinstall_and_removal_preserve_both_profiles() {
     assert!(host_config.contains("[permissions.appa.network.domains]"));
     assert!(fixture.profile().join("codex-home/skills/appa-guide/SKILL.md").exists());
     assert_eq!(
+        fs::read_to_string(
+            fixture
+                .profile()
+                .join("codex-home/skills/appa-guide/references/contracts.md")
+        )
+        .unwrap(),
+        fs::read_to_string(repo_root().join("website/content/docs/contracts.md")).unwrap(),
+    );
+    assert_eq!(
         fs::read_to_string(fixture.profile().join("claude-home/settings.json")).unwrap(),
         "{\"theme\":\"dark\"}\n"
     );
@@ -123,6 +136,12 @@ fn direct_codex_activation_reinstall_and_removal_preserve_both_profiles() {
     assert!(!host_config.contains("[mcp_servers.appa]"));
     assert!(!host_config.contains("[permissions.appa]"));
     assert!(!fixture.profile().join("codex-home/skills/appa-guide/SKILL.md").exists());
+    assert!(
+        !fixture
+            .profile()
+            .join("codex-home/skills/appa-guide/references/contracts.md")
+            .exists()
+    );
     assert_eq!(
         fs::read_to_string(fixture.profile().join("claude-home/settings.json")).unwrap(),
         "{\"theme\":\"dark\"}\n"
@@ -175,7 +194,15 @@ fn launcher_inherits_host_mode_after_the_sandbox_check() {
     assert!(String::from_utf8_lossy(&strict.stderr).contains("command sandbox cannot reach"));
 
     let output = launch()
-        .args(["--", "-c", "features.code_mode_host=false"])
+        .args([
+            "--",
+            "-c",
+            "features.code_mode_host=false",
+            "--search",
+            "--enable",
+            "apps",
+            "--enable=browser_use",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -187,6 +214,13 @@ fn launcher_inherits_host_mode_after_the_sandbox_check() {
     assert!(launch.contains("features.hooks=true"), "{launch}");
     assert!(launch.contains("features.code_mode_host=false"), "{launch}");
     assert!(!launch.contains("features.code_mode_host=true"), "{launch}");
+    assert!(!launch.contains("features.apps=false"), "{launch}");
+    assert!(!launch.contains("features.browser_use=false"), "{launch}");
+    assert!(launch.contains("features.multi_agent=false"), "{launch}");
+    assert!(
+        launch.contains("--search --enable apps --enable=browser_use"),
+        "{launch}"
+    );
     assert!(calls.next().is_none());
 }
 
@@ -214,4 +248,174 @@ fn codex_hook_guard_denies_a_worker_failure() {
     let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(answer["hookSpecificOutput"]["permissionDecision"], "deny");
     assert!(!String::from_utf8_lossy(&output.stdout).contains("printf secret"));
+}
+
+fn success(output: Output) -> String {
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn hook_decision(fixture: &Fixture, session: &str) -> String {
+    let mut child = fixture
+        .process(&["hook", "--adapter", "codex", "--deployment-url", &fixture.endpoint])
+        .env("APPA_GATE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let event = serde_json::json!({
+        "hook_event_name": "PreToolUse", "session_id": session,
+        "tool_name": "audit_probe", "tool_use_id": session,
+        "cwd": fixture.profile(), "tool_input": {}
+    });
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(event.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let answer: serde_json::Value = serde_json::from_str(&success(output)).unwrap();
+    if answer == serde_json::json!({}) {
+        "allow".to_owned()
+    } else {
+        answer["hookSpecificOutput"]["permissionDecision"]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing permission decision: {answer}"))
+            .to_owned()
+    }
+}
+
+#[test]
+fn installed_custom_policy_reloads_before_launch_and_through_the_explicit_command() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new();
+    let custom = fixture.profile().join("custom.appa.toml");
+    let allowed = "[externals]\ntimeout_ms = 5000\nmax_body_bytes = 65536\n[policy]\nversion = 2\n[[policy.tool]]\nname = 'host/codex/audit_probe'\n";
+    fs::write(&custom, allowed).unwrap();
+    success(fixture.command(&["activate-codex", "--config", custom.to_str().unwrap()]));
+    let described = success(fixture.command(&["describe", "--adapter", "codex", "--check"]));
+    assert!(described.contains(custom.to_str().unwrap()), "{described}");
+    let first = success(fixture.command(&["codex-policy-key"]));
+    assert_eq!(hook_decision(&fixture, "before-update"), "allow");
+
+    // This represents the approved root edit. The check validates disk only.
+    fs::write(&custom, format!("{allowed}requires = {{ attention = ['blocked'] }}\n")).unwrap();
+    success(fixture.command(&["describe", "--adapter", "codex", "--check"]));
+    assert_eq!(success(fixture.command(&["codex-policy-key"])), first);
+
+    let bin = fixture.profile().join("fake-bin");
+    fs::create_dir(&bin).unwrap();
+    let fake = bin.join("codex");
+    fs::write(&fake, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+    let launched = fixture
+        .process(&["codex", "--"])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        launched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&launched.stderr)
+    );
+    let second = success(fixture.command(&["codex-policy-key"]));
+    assert_ne!(first, second);
+    assert!(String::from_utf8_lossy(&launched.stderr).contains(&second));
+    assert_eq!(hook_decision(&fixture, "after-launch-update"), "deny");
+
+    fs::write(&custom, allowed).unwrap();
+    assert_eq!(success(fixture.command(&["codex-policy-key"])), second);
+    assert_eq!(success(fixture.command(&["codex-reload"])), first);
+    assert_eq!(hook_decision(&fixture, "after-explicit-reload"), "allow");
+
+    fs::write(&custom, "invalid TOML").unwrap();
+    assert!(!fixture.command(&["codex-reload"]).status.success());
+    assert!(!fixture.process(&["codex", "--"]).output().unwrap().status.success());
+    assert_eq!(success(fixture.command(&["codex-policy-key"])), first);
+
+    // An unreadable receipt cannot silently select the default policy.
+    fs::write(fixture.profile().join("data/codex/install-receipt.json"), "broken").unwrap();
+    assert!(
+        !fixture
+            .command(&["describe", "--adapter", "codex", "--check"])
+            .status
+            .success()
+    );
+    assert!(
+        fixture
+            .command(&[
+                "describe",
+                "--adapter",
+                "codex",
+                "--config",
+                fixture.config.to_str().unwrap(),
+                "--check"
+            ])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn hook_edit_diagnostic_supports_targeted_restoration_and_preserves_custom_hooks() {
+    let fixture = Fixture::new();
+    let config = fixture.config.to_str().unwrap();
+    success(fixture.command(&["activate-codex", "--config", config]));
+    let path = fixture.profile().join("codex-home/hooks.json");
+    let receipt_path = fixture.profile().join("data/codex/install-receipt.json");
+    let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    let mut hooks: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let foreign = serde_json::json!({"type": "command", "command": "custom-in-shared-group"});
+    hooks["hooks"]["PreToolUse"][1]["hooks"][0]["timeout"] = serde_json::json!(131);
+    hooks["hooks"]["PreToolUse"][1]["hooks"]
+        .as_array_mut()
+        .unwrap()
+        .push(foreign.clone());
+    let edited = serde_json::to_vec_pretty(&hooks).unwrap();
+    fs::write(&path, &edited).unwrap();
+    for arguments in [
+        vec!["codex", "--"],
+        vec!["activate-codex", "--config", config],
+        vec!["remove-codex", "--config", config],
+    ] {
+        let refused = fixture.command(&arguments);
+        assert!(!refused.status.success());
+        let error = String::from_utf8_lossy(&refused.stderr);
+        for expected in [
+            "PreToolUse",
+            path.to_str().unwrap(),
+            receipt_path.to_str().unwrap(),
+            "Restore only the affected",
+            "Do not delete the receipt",
+        ] {
+            assert!(error.contains(expected), "{error}");
+        }
+        assert_eq!(fs::read(&path).unwrap(), edited);
+        assert!(receipt_path.exists());
+    }
+    // Execute the diagnostic procedure: retain the edit in a backup and move
+    // the unrelated hook to its own group before restoring just the APPA group.
+    fs::write(path.with_extension("json.backup"), &edited).unwrap();
+    let matcher = hooks["hooks"]["PreToolUse"][1]["matcher"].clone();
+    hooks["hooks"]["PreToolUse"][1] = receipt["hooks"]["PreToolUse"].clone();
+    hooks["hooks"]["PreToolUse"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"matcher": matcher, "hooks": [foreign]}));
+    fs::write(&path, serde_json::to_vec_pretty(&hooks).unwrap()).unwrap();
+    success(fixture.command(&["activate-codex", "--config", config]));
+    success(fixture.command(&["remove-codex", "--config", config]));
+    assert_eq!(fs::read(path.with_extension("json.backup")).unwrap(), edited);
+    let remaining: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(remaining["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        remaining["hooks"]["PreToolUse"][1]["hooks"][0]["command"],
+        "custom-in-shared-group"
+    );
+    assert_eq!(remaining["hooks"]["PreToolUse"][1]["matcher"], "*");
 }

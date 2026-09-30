@@ -19,6 +19,10 @@ enum Command {
         #[arg(last = true)]
         args: Vec<OsString>,
     },
+    /// Load the installed Codex policy and print its verified active key.
+    CodexReload,
+    /// Print the active Codex policy key. Leave the runtime unchanged.
+    CodexPolicyKey,
     /// Test runtime HTTP access from inside Codex's command sandbox.
     #[command(hide = true)]
     CodexProbe {
@@ -237,6 +241,23 @@ fn main() -> ExitCode {
         }
     };
     match parsed.command {
+        command @ (Command::CodexReload | Command::CodexPolicyKey) => {
+            let result = if matches!(command, Command::CodexReload) {
+                appa_runtime::init::reload_codex_policy()
+            } else {
+                appa_runtime::init::codex_policy_key()
+            };
+            match result {
+                Ok(key) => {
+                    println!("{key}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Codex { args } => appa_runtime::init::launch_codex(args),
         Command::CodexProbe { url } => appa_runtime::codex_probe::run(&url),
         Command::CodexExec { url, handle } => appa_runtime::codex::exec::run(&url, &handle),
@@ -341,13 +362,17 @@ fn main() -> ExitCode {
             check,
             session_tools,
         } => {
-            let config = config.unwrap_or_else(|| {
-                if adapter == AdapterName::Codex {
-                    appa_runtime::init::installed_codex_config_path()
-                } else {
-                    appa_runtime::init::installed_config_path()
-                }
-            });
+            let config = match config {
+                Some(config) => config,
+                None if adapter == AdapterName::Codex => match appa_runtime::init::resolved_codex_config_path() {
+                    Ok(config) => config,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        return ExitCode::FAILURE;
+                    }
+                },
+                None => appa_runtime::init::installed_config_path(),
+            };
             let batteries_dir = if batteries_dir.is_empty() {
                 appa_runtime::batteries::default_search_path(&config)
             } else {

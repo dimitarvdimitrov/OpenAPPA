@@ -12,10 +12,14 @@ Do not describe a regular Codex session as protected by this policy.
 4. Pass the names with `--session-tools` to `appa describe --adapter codex`.
 5. Include MCP server names as Codex reports them.
 6. Inspect the included and available batteries.
-7. Confirm that `http://127.0.0.1:8766/adapter` answers `codex` before you describe a session as protected.
+7. Check that `http://127.0.0.1:8766/adapter` answers `codex` before you describe a session as protected.
 
-The default policy is in the platform APPA config directory under `codex/appa.toml`.
-The Codex battery covers host commands and known local tools.
+The `Config:` path from `appa describe --adapter codex` comes from the installation receipt when one exists.
+Without a receipt, the default path is `codex/appa.toml` under the platform APPA config directory.
+An explicit `--config` overrides that selection.
+The Codex battery supplies command contracts.
+The default Codex root policy supplies local tool contracts.
+The installed syntax reference is `references/contracts.md` beside this skill.
 Other MCP batteries need separate setup.
 
 Do not read secrets or unrelated files.
@@ -28,11 +32,21 @@ Present the complete behavior in plain English before an edit.
 
 A proposal does not authorize a write.
 
-After approval, re-read the policy and inventory.
-Edit only the approved root rules or includes.
-Run `appa describe --adapter codex --config <policy> --check`.
-Reload the Codex runtime policy.
-A new session uses the new policy.
+After approval:
+
+1. Re-read the policy and inventory.
+2. Edit only the approved root rules or includes.
+3. Run `appa describe --adapter codex --config <policy> --check`.
+4. Run `appa codex-reload`.
+5. Record the active policy key that the command prints.
+6. Start a new session with `appa codex --`.
+7. Run `appa codex-policy-key`.
+8. Check that its key matches the recorded key before the denial check.
+
+The launcher reconciles the installed policy before it starts Codex.
+It checks the runtime deployment and the active policy key.
+`appa codex-policy-key` reads the active key without a reload.
+A changed policy does not reset the labels of an existing session.
 
 After approval, use `appa battery install <name> --config <policy>` for batteries.
 For a manual root edit, keep comments and unrelated rules.
@@ -62,3 +76,32 @@ Codex can skip an untrusted hook or run an original command if the supervisor fa
 Native Windows commands need a separate sandbox and console probe.
 
 Do not disable the filesystem sandbox, allow public hosts, or bypass hook trust to make the HTTP check pass.
+
+## Develop the command classifier hint
+
+Battery guidance connects recognizable CLI commands with each battery's source and sink intent.
+This guidance does not reproduce typed MCP contracts, audience sources, or specialized Annotators.
+
+During `init`, develop the hint for the root `codex.command-requirements` Annotator:
+
+1. Read each approved battery's `appa.toml` and README from the deployment's battery store.
+2. Translate its source trust and destination audience requirements into concise command guidance.
+3. Use dynamic facts only when an installed context provider supplies them for that command.
+4. State uncertainty conservatively when the command and supplied context cannot establish the boundary.
+5. Preserve the existing root hint as an operator customization.
+6. Keep the complete hint within 512 characters.
+7. If guidance conflicts or exceeds that limit, propose the smallest explicit revision.
+8. Include the exact proposed hint and its practical effect in the proposal.
+9. After approval, copy the complete `codex.command-requirements` declaration into the root when necessary.
+10. Change only its `hint`.
+11. Preserve its implementation, inputs, and mandate.
+12. Leave included battery files unchanged.
+13. Run the policy check, reload, and procedure for a new session above.
+
+Keep `codex.repository-requirements` separate from the generic command Annotator.
+The GitHub battery supplies its facts through `context.github`.
+Do not claim that a generated hint reproduces those facts or the specialized contract.
+
+Configured MCP discovery remains incomplete for Codex.
+The inventory covers the supplied session tools and cannot identify every absent connection.
+`MCP servers: none` does not establish that the Codex configuration contains no servers.

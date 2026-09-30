@@ -11,7 +11,7 @@ use appa_runtime_api::AdapterName;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::endpoint::{Endpoint, endpoint_health, reconcile_policy, verify_runtime_deployment};
+use super::endpoint::{Endpoint, endpoint_health, reconcile_policy, serving_policy_key, verify_runtime_deployment};
 use super::paths::{appa_filename, codex_config_dir, codex_data_dir};
 use super::{Compensation, InitError, Undo, file_before, install_runtime, write_state};
 use crate::runtime_url::RuntimeTarget;
@@ -81,29 +81,109 @@ fn read_hooks(path: &Path) -> Result<Value, InitError> {
     Ok(document)
 }
 
-fn remove_owned_hooks(document: &mut Value, previous: &Receipt, path: &Path) -> Result<(), InitError> {
-    let Some(hooks) = document.get_mut("hooks").and_then(Value::as_object_mut) else {
-        return Err(profile_error(path, "an installed APPA hook group is missing"));
-    };
+fn verify_owned_hooks(document: &Value, previous: &Receipt, path: &Path, receipt_path: &Path) -> Result<(), InitError> {
     for (event, group) in &previous.hooks {
-        let Some(groups) = hooks.get_mut(event).and_then(Value::as_array_mut) else {
+        if !document["hooks"][event]
+            .as_array()
+            .is_some_and(|groups| groups.contains(group))
+        {
             return Err(profile_error(
                 path,
-                format!("installed {event} hook group was removed or changed"),
+                format!(
+                    "The installed {event} APPA hook group is missing or edited. The receipt is {}.\n\
+                 1. Back up hooks.json and the receipt.\n\
+                 2. Compare hooks[{event}] with receipt.hooks[{event}].\n\
+                 3. Preserve custom values in the backup.\n\
+                 4. Move unrelated hooks from that group into a separate group with their original matcher.\n\
+                 5. Restore only the affected APPA group from the receipt.\n\
+                 6. Retry the original command.\n\
+                 7. After reinstall, review and trust the hooks through /hooks.\n\
+                 Do not delete the receipt. Reinstall can duplicate foreign registrations.",
+                    receipt_path.display()
+                ),
             ));
-        };
-        let Some(index) = groups.iter().position(|candidate| candidate == group) else {
-            return Err(profile_error(path, format!("installed {event} hook group was edited")));
-        };
+        }
+    }
+    Ok(())
+}
+
+fn remove_owned_hooks(
+    document: &mut Value,
+    previous: &Receipt,
+    path: &Path,
+    receipt_path: &Path,
+) -> Result<(), InitError> {
+    verify_owned_hooks(document, previous, path, receipt_path)?;
+    for (event, group) in &previous.hooks {
+        let hooks = document["hooks"].as_object_mut().expect("verified hooks");
+        let groups = hooks[event].as_array_mut().expect("verified event");
+        let index = groups
+            .iter()
+            .position(|candidate| candidate == group)
+            .expect("verified group");
         groups.remove(index);
         if groups.is_empty() {
             hooks.remove(event);
         }
     }
-    if hooks.is_empty() {
+    if document
+        .get("hooks")
+        .and_then(Value::as_object)
+        .is_some_and(|hooks| hooks.is_empty())
+    {
         document.as_object_mut().expect("object checked").remove("hooks");
     }
     Ok(())
+}
+
+/// Resolve the policy from the activation receipt. Refuse malformed state.
+pub fn resolved_codex_config_path() -> Result<PathBuf, InitError> {
+    let receipt = codex_data_dir()?.join("install-receipt.json");
+    Ok(read_receipt(&receipt)?.map_or_else(super::paths::installed_codex_config_path, |receipt| receipt.config))
+}
+
+fn installed_receipt() -> Result<Receipt, InitError> {
+    let (_, _, path) = profile_paths()?;
+    read_receipt(&path)?
+        .ok_or_else(|| profile_error(&path, "install the Codex plugin first: appa plugin install codex"))
+}
+
+fn installed_runtime(receipt: &Receipt, reconcile: bool) -> Result<Endpoint, InitError> {
+    let endpoint = Endpoint::resolve_for(AdapterName::Codex)?;
+    let data = codex_data_dir()?;
+    let binary = data.join("bin").join(appa_filename());
+    let policy = if reconcile {
+        Some(super::config::verify_config(&receipt.config)?)
+    } else {
+        None
+    };
+    if reconcile {
+        let target = RuntimeTarget {
+            url: endpoint.url().to_owned(),
+            user_owned: false,
+        };
+        let deployment = crate::runtime_start::Deployment {
+            config: receipt.config.clone(),
+            data_dir: data,
+        };
+        crate::runtime_start::ensure_for(&target, &deployment, &binary, &[], AdapterName::Codex)
+            .map_err(|error| InitError::Starter(error.to_string()))?;
+    }
+    verify_runtime_deployment(&binary, &receipt.config, &endpoint)?;
+    if let Some(policy) = policy {
+        reconcile_policy(&endpoint, &receipt.config, &policy)?;
+    }
+    Ok(endpoint)
+}
+
+/// Reconcile the installed policy and return its verified active key.
+pub fn reload_codex_policy() -> Result<String, InitError> {
+    serving_policy_key(&installed_runtime(&installed_receipt()?, true)?)
+}
+
+/// Return the active key without a policy change or runtime startup.
+pub fn codex_policy_key() -> Result<String, InitError> {
+    serving_policy_key(&installed_runtime(&installed_receipt()?, false)?)
 }
 
 fn shell_literal(text: &str) -> String {
@@ -162,13 +242,14 @@ fn hook_groups(binary: &Path, url: &str) -> Result<BTreeMap<String, Value>, Init
 fn install_hooks(
     path: &Path,
     previous: Option<&Receipt>,
+    receipt_path: &Path,
     wanted: &Receipt,
     compensation: &mut Compensation,
 ) -> Result<(), InitError> {
     let destination = profile_destination(path)?;
     let mut document = read_hooks(&destination)?;
     if let Some(previous) = previous {
-        remove_owned_hooks(&mut document, previous, path)?;
+        remove_owned_hooks(&mut document, previous, path, receipt_path)?;
     }
     let hooks = document
         .as_object_mut()
@@ -337,7 +418,13 @@ pub fn activate_codex(config: &Path) -> Result<String, InitError> {
     let mut compensation = Compensation::default();
     let activation = (|| {
         install_runtime(&appa, &binary, &mut compensation)?;
-        install_hooks(&hooks_path, previous.as_ref(), &wanted, &mut compensation)?;
+        install_hooks(
+            &hooks_path,
+            previous.as_ref(),
+            &receipt_path,
+            &wanted,
+            &mut compensation,
+        )?;
         edit_mcp(
             &config_path,
             previous.as_ref(),
@@ -402,7 +489,7 @@ pub fn codex_remove() -> Result<(), InitError> {
     };
     let hooks_destination = profile_destination(&hooks_path)?;
     let mut hooks = read_hooks(&hooks_destination)?;
-    remove_owned_hooks(&mut hooks, &receipt, &hooks_path)?;
+    remove_owned_hooks(&mut hooks, &receipt, &hooks_path, &receipt_path)?;
     let mut compensation = Compensation::default();
     let removal = (|| {
         edit_mcp(&config_path, Some(&receipt), None, &mut compensation)?;
@@ -451,7 +538,7 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if !hooks.exists() || !receipt.exists() {
+    if !receipt.exists() {
         eprintln!("appa codex: install the Codex plugin first: appa plugin install codex");
         return ExitCode::FAILURE;
     }
@@ -477,44 +564,30 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if installed.hooks.iter().any(|(event, group)| {
-        !current["hooks"][event]
-            .as_array()
-            .is_some_and(|groups| groups.contains(group))
-    }) {
-        eprintln!("appa codex: installed hooks changed; rerun appa plugin install codex and review /hooks");
+    if let Err(error) = verify_owned_hooks(&current, &installed, &hooks, &receipt) {
+        eprintln!("appa codex: {error}");
         return ExitCode::FAILURE;
     }
-    let endpoint = match Endpoint::resolve_for(AdapterName::Codex) {
+    let endpoint = match installed_runtime(&installed, true) {
         Ok(endpoint) => endpoint,
         Err(error) => {
             eprintln!("appa codex: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let data = match codex_data_dir() {
-        Ok(data) => data,
+    let binary = match codex_data_dir() {
+        Ok(data) => data.join("bin").join(appa_filename()),
         Err(error) => {
             eprintln!("appa codex: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let binary = data.join("bin").join(appa_filename());
-    let target = RuntimeTarget {
-        url: endpoint.url().to_owned(),
-        user_owned: false,
-    };
-    let deployment = crate::runtime_start::Deployment {
-        config: installed.config.clone(),
-        data_dir: data,
-    };
-    if let Err(error) = crate::runtime_start::ensure_for(&target, &deployment, &binary, &[], AdapterName::Codex) {
-        eprintln!("appa codex: runtime check failed: {error}");
-        return ExitCode::FAILURE;
-    }
-    if let Err(error) = verify_runtime_deployment(&binary, &installed.config, &endpoint) {
-        eprintln!("appa codex: {error}");
-        return ExitCode::FAILURE;
+    match serving_policy_key(&endpoint) {
+        Ok(key) => eprintln!("appa codex: active policy key {key}"),
+        Err(error) => {
+            eprintln!("appa codex: {error}");
+            return ExitCode::FAILURE;
+        }
     }
     let probe_options = match probe_options(&arguments) {
         Ok(options) => options,
@@ -535,10 +608,6 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
             "features.network_proxy=true",
             "-c",
             "features.hooks=true",
-            "-c",
-            "features.apps=false",
-            "-c",
-            "features.browser_use=false",
             "-c",
             "features.multi_agent=false",
         ])
@@ -563,7 +632,7 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
         let option = arguments[index].to_string_lossy();
         if matches!(
             option.as_ref(),
-            "--dangerously-bypass-approvals-and-sandbox" | "--dangerously-bypass-hook-trust" | "--search"
+            "--dangerously-bypass-approvals-and-sandbox" | "--dangerously-bypass-hook-trust"
         ) {
             return Err("this Codex option bypasses a protected tool or hook path");
         }
@@ -581,7 +650,7 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
             };
             let value_text = value.to_string_lossy();
             if (option == "--disable" && matches!(value_text.as_ref(), "hooks" | "network_proxy"))
-                || (option == "--enable" && matches!(value_text.as_ref(), "apps" | "browser_use" | "multi_agent"))
+                || (option == "--enable" && value_text == "multi_agent")
                 || (matches!(option.as_ref(), "-c" | "--config") && forbidden_config_override(&value_text))
             {
                 return Err("a Codex option disables hooks or replaces the protected permission profile");
@@ -591,9 +660,7 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
             continue;
         }
         if matches!(option.as_ref(), "--disable=hooks" | "--disable=network_proxy")
-            || ["apps", "browser_use", "multi_agent"]
-                .iter()
-                .any(|feature| option == format!("--enable={feature}"))
+            || option == "--enable=multi_agent"
             || option.strip_prefix("--config=").is_some_and(forbidden_config_override)
         {
             return Err("a Codex option disables hooks or replaces the protected permission profile");
@@ -617,7 +684,7 @@ fn forbidden_config_override(value: &str) -> bool {
     let setting = setting.trim();
     key == "default_permissions"
         || (matches!(key, "features.hooks" | "features.network_proxy") && setting == "false")
-        || (matches!(key, "features.apps" | "features.browser_use" | "features.multi_agent") && setting == "true")
+        || (key == "features.multi_agent" && setting == "true")
 }
 
 fn sandbox_probe(binary: &Path, url: &str, options: &[OsString]) -> Result<(), String> {
@@ -668,7 +735,7 @@ mod tests {
             config: root.path().join("appa.toml"),
         };
         let mut undo = Compensation::default();
-        install_hooks(&hooks_path, None, &first, &mut undo).unwrap();
+        install_hooks(&hooks_path, None, &root.path().join("receipt.json"), &first, &mut undo).unwrap();
         edit_mcp(&config_path, None, Some(&first.mcp_url), &mut undo).unwrap();
         let installed = read_hooks(&hooks_path).unwrap();
         assert!(
@@ -679,10 +746,66 @@ mod tests {
         );
         assert!(fs::read_to_string(&config_path).unwrap().contains("model = 'test'"));
         let mut removed = installed;
-        remove_owned_hooks(&mut removed, &first, &hooks_path).unwrap();
+        remove_owned_hooks(&mut removed, &first, &hooks_path, &root.path().join("receipt.json")).unwrap();
         assert_eq!(removed, foreign);
         edit_mcp(&config_path, Some(&first), None, &mut Compensation::default()).unwrap();
         assert!(!fs::read_to_string(&config_path).unwrap().contains("[mcp_servers.appa]"));
+    }
+
+    #[test]
+    fn hook_mismatches_name_the_affected_event_without_partial_removal() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("hooks.json");
+        let receipt_path = root.path().join("receipt.json");
+        let receipt = Receipt {
+            hooks: hook_groups(Path::new("/tmp/appa"), "http://127.0.0.1:8766").unwrap(),
+            mcp_url: "http://127.0.0.1:8766/mcp".into(),
+            config: root.path().join("appa.toml"),
+        };
+        let groups: BTreeMap<_, _> = receipt
+            .hooks
+            .iter()
+            .map(|(event, group)| (event.clone(), json!([group])))
+            .collect();
+        let original = json!({"hooks": groups});
+        let mutations: [fn(&mut Value); 8] = [
+            |doc| doc["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = json!(131),
+            |doc| doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = json!("edited command"),
+            |doc| doc["hooks"]["PreToolUse"][0]["matcher"] = json!("Bash"),
+            |doc| doc["hooks"]["PreToolUse"][0]["custom"] = json!(true),
+            |doc| {
+                doc["hooks"]["PreToolUse"][0]["hooks"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"command": "foreign"}));
+            },
+            |doc| doc["hooks"]["PreToolUse"] = json!([]),
+            |doc| {
+                doc["hooks"].as_object_mut().unwrap().remove("PreToolUse");
+            },
+            |doc| doc["hooks"]["PreToolUse"] = json!({}),
+        ];
+        for mutate in mutations {
+            let mut document = original.clone();
+            mutate(&mut document);
+            let before = document.clone();
+            let error = remove_owned_hooks(&mut document, &receipt, &path, &receipt_path)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("PreToolUse"), "{error}");
+            assert!(error.contains(receipt_path.to_str().unwrap()), "{error}");
+            assert_eq!(document, before);
+        }
+        let mut document = original;
+        document["hooks"]["PreToolUse"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"hooks": [{"command": "foreign"}]}));
+        remove_owned_hooks(&mut document, &receipt, &path, &receipt_path).unwrap();
+        assert_eq!(
+            document["hooks"]["PreToolUse"],
+            json!([{"hooks": [{"command": "foreign"}]}])
+        );
     }
 
     #[test]
@@ -695,7 +818,7 @@ mod tests {
             config: root.path().join("appa.toml"),
         };
         let mut hooks = json!({"hooks": {"PreToolUse": [{"hooks": []}]}});
-        assert!(remove_owned_hooks(&mut hooks, &receipt, &path).is_err());
+        assert!(remove_owned_hooks(&mut hooks, &receipt, &path, &root.path().join("receipt.json")).is_err());
     }
 
     #[test]
@@ -734,7 +857,7 @@ mod tests {
             config: root.path().join("appa.toml"),
         };
         let mut undo = Compensation::default();
-        install_hooks(&hooks, None, &receipt, &mut undo).unwrap();
+        install_hooks(&hooks, None, &root.path().join("receipt.json"), &receipt, &mut undo).unwrap();
         edit_mcp(&config, None, Some(&receipt.mcp_url), &mut undo).unwrap();
         assert_eq!(fs::read_link(&hooks).unwrap(), hooks_target);
         assert_eq!(fs::read_link(&config).unwrap(), config_target);
@@ -751,7 +874,7 @@ mod tests {
     fn launcher_rejects_overrides_of_protected_controls() {
         for arguments in [
             vec!["--disable", "hooks"],
-            vec!["--enable", "browser_use"],
+            vec!["--enable", "multi_agent"],
             vec!["-c", "default_permissions = ':workspace'"],
             vec!["--config=features.network_proxy=false"],
             vec!["--dangerously-bypass-hook-trust"],
@@ -767,6 +890,11 @@ mod tests {
         ];
         assert_eq!(probe_options(&allowed).unwrap(), allowed[..2]);
         for arguments in [
+            vec!["--enable", "apps"],
+            vec!["--enable=browser_use"],
+            vec!["--config=features.apps=true"],
+            vec!["-c", "features.browser_use=true"],
+            vec!["--search"],
             vec!["--disable", "code_mode_host"],
             vec!["--disable=code_mode_host"],
             vec!["--config=features.code_mode_host=false"],

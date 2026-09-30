@@ -25,7 +25,9 @@ mod removal;
 pub(crate) mod settings;
 mod skill;
 
-pub use self::codex::{activate_codex, codex_remove, launch_codex};
+pub use self::codex::{
+    activate_codex, codex_policy_key, codex_remove, launch_codex, reload_codex_policy, resolved_codex_config_path,
+};
 pub(crate) use self::mcp::SERVER as RUNTIME_SERVER;
 pub use self::paths::installed_codex_config_path;
 pub use self::paths::installed_config_path;
