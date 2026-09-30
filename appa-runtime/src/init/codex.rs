@@ -600,7 +600,8 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
         eprintln!("appa codex: {message}");
         return ExitCode::FAILURE;
     }
-    let status = Command::new("codex")
+    let mut command = Command::new("codex");
+    command
         .args([
             "-c",
             "default_permissions=\"appa\"",
@@ -617,9 +618,20 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
             "-c",
             "mcp_servers.appa.tools.execute_remedy_plan.approval_mode=\"approve\"",
         ])
-        .args(arguments)
+        .args(&arguments)
         .env("APPA_GATE", "1")
-        .status();
+        .env_remove("APPA_CODEX_STATUS_FILE");
+    #[cfg(unix)]
+    if crate::codex_terminal::is_interactive(&arguments) {
+        return match crate::codex_terminal::run(&command, endpoint.url()) {
+            Ok(code) => ExitCode::from(code),
+            Err(error) => {
+                eprintln!("appa codex: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let status = command.status();
     match status {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8),
         Err(error) => {

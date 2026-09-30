@@ -42,6 +42,13 @@ Start a session with:
 appa codex --
 ```
 
+Interactive sessions show APPA's mark, `trust:`, and `audience:` in a separate live footer.
+The terminal wrapper reserves two rows and uses the alternate screen, including with `--no-alt-screen`.
+The labels reflect the current trajectory after an accepted `SessionStart` hook.
+If the runtime does not answer, the footer shows only the mark.
+Noninteractive commands and redirected input or output use Codex directly.
+[Codex issue #17827](https://github.com/openai/codex/issues/17827) requests native custom statusline support that can replace this wrapper.
+
 The launcher uses your Codex shell setting, `features.code_mode_host`.
 Codex CLI 0.159.2 enables the shell by default.
 For this launch, it sets `approval_policy = "on-request"` and `approvals_reviewer = "user"`.

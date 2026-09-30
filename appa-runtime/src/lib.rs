@@ -14,6 +14,8 @@ pub mod codex;
 pub mod codex_hook_guard;
 #[cfg(feature = "daemon")]
 pub mod codex_probe;
+#[cfg(all(feature = "daemon", unix))]
+mod codex_terminal;
 pub mod config;
 #[cfg(feature = "daemon")]
 mod default_config;

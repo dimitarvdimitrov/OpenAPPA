@@ -239,6 +239,223 @@ fn launcher_inherits_host_mode_after_the_sandbox_check() {
 }
 
 #[test]
+fn terminal_footer_tracks_labels_and_restores_the_terminal() {
+    terminal_footer_case(false);
+}
+
+#[test]
+fn terminal_footer_restores_the_terminal_after_a_signal() {
+    terminal_footer_case(true);
+}
+
+fn terminal_footer_case(interrupt: bool) {
+    appa_runtime::tls::install_crypto_provider();
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let fixture = Fixture::new();
+    fs::write(&fixture.config, "[externals]\ntimeout_ms = 5000\nmax_body_bytes = 65536\n[policy]\nversion = 2\n[[policy.tool]]\nname = 'host/codex/audit_probe'\ndelta = { trust = 'suspicious', audience = ['internal'] }\n").unwrap();
+    let installed = fixture.command(&["activate-codex", "--config", fixture.config.to_str().unwrap()]);
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let bin = fixture.profile().join("fake-bin");
+    fs::create_dir(&bin).unwrap();
+    let fake = bin.join("codex");
+    fs::write(
+        &fake,
+        r#"#!/usr/bin/env python3
+import json, os, subprocess, sys, tty
+if sys.argv[1] == 'sandbox':
+    sys.exit(0)
+tty.setraw(0)
+def hook(event, **fields):
+    payload = dict(hook_event_name=event, session_id='footer-test', **fields)
+    result = subprocess.run([os.environ['APPA_TEST_BIN'], 'codex-hook', '--event', event,
+        '--deployment-url', os.environ['APPA_ENDPOINT']], input=json.dumps(payload).encode(), capture_output=True)
+    assert result.returncode == 0, result.stderr
+    answer = json.loads(result.stdout or '{}')
+    with open(os.environ['APPA_TEST_HOOK_LOG'], 'a') as log:
+        log.write(event + ': ' + json.dumps(answer) + '\n')
+    return answer
+hook('SessionStart')
+hook('UserPromptSubmit', prompt='hello')
+size = os.get_terminal_size()
+sys.stdout.write('\x1b[?1049h\x1b[2J\x1b[Hviewport:%dx%d' % (size.columns, size.lines))
+sys.stdout.flush()
+while True:
+    key = os.read(0, 1)
+    if key == b'r':
+        size = os.get_terminal_size()
+        sys.stdout.write('\x1b[Hviewport:%dx%d' % (size.columns, size.lines))
+        sys.stdout.flush()
+    elif key == b'l':
+        sys.stdout.write('\x1b[2;1Hlabel-update')
+        sys.stdout.flush()
+        hook('PreToolUse', tool_name='audit_probe', tool_input={}, tool_use_id='read')
+        sys.stdout.write('\x1b[2;1Hoffer-ready ')
+        sys.stdout.flush()
+    elif key == b'p':
+        hook('PreToolUse', tool_name='audit_probe', tool_input={}, tool_use_id='read')
+        hook('PostToolUse', tool_name='audit_probe', tool_input={}, tool_use_id='read', tool_response='data')
+    elif key == b'q':
+        sys.exit(7)
+    elif key == b't':
+        os.kill(os.getppid(), 15)
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+    let path = std::env::join_paths(paths).unwrap();
+    let size = portable_pty::PtySize {
+        rows: 12,
+        cols: 80,
+        ..portable_pty::PtySize::default()
+    };
+    let pair = portable_pty::native_pty_system().openpty(size).unwrap();
+    let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_appa"));
+    command.args(["codex", "--"]);
+    for (key, value) in fixture.process(&[]).get_envs() {
+        if let Some(value) = value {
+            command.env(key, value);
+        }
+    }
+    command.env("PATH", path);
+    command.env("APPA_TEST_BIN", env!("CARGO_BIN_EXE_appa"));
+    let hook_log = fixture.profile().join("hook-log");
+    command.env("APPA_TEST_HOOK_LOG", &hook_log);
+    let mut child = pair.slave.spawn_command(command).unwrap();
+    // Kill a stalled fixture if an assertion fails.
+    struct KillOnDrop(Box<dyn portable_pty::ChildKiller + Send + Sync>);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+        }
+    }
+    let _cleanup = KillOnDrop(child.clone_killer());
+    let original = pair.master.get_termios().unwrap();
+    drop(pair.slave);
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let mut writer = pair.master.take_writer().unwrap();
+    let (send, receive) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buffer = [0; 16384];
+        while let Ok(length) = reader.read(&mut buffer) {
+            if length == 0 || send.send(buffer[..length].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let mut terminal = vt100::Parser::new(12, 80, 0);
+    let read_until = |terminal: &mut vt100::Parser, needle: &str| {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !terminal.screen().contents().contains(needle) {
+            let bytes = receive
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "missing {needle}: {error}; screen: {}; hooks: {}",
+                        terminal.screen().contents(),
+                        fs::read_to_string(&hook_log).unwrap_or_default()
+                    )
+                });
+            terminal.process(&bytes);
+        }
+    };
+    read_until(&mut terminal, "trust:trusted  audience:public");
+    assert!(terminal.screen().contents().contains("viewport:80x10"));
+    writer.write_all(b"l").unwrap();
+    read_until(&mut terminal, "offer-ready");
+    let log = fs::read_to_string(&hook_log).unwrap();
+    let answer: serde_json::Value =
+        serde_json::from_str(log.lines().last().unwrap().strip_prefix("PreToolUse: ").unwrap()).unwrap();
+    let feedback = answer["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap();
+    let offer = common::offers(feedback)[0].0.clone();
+    let control = serde_json::json!({"hook_event_name": "PreToolUse", "session_id": "footer-test",
+        "tool_name": "mcp__appa__execute_remedy_plan", "tool_use_id": "accept-labels",
+        "tool_input": {"offer_id": offer}});
+    let mut hook = fixture
+        .process(&["hook", "--adapter", "codex", "--deployment-url", &fixture.endpoint])
+        .env("APPA_GATE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    hook.stdin
+        .take()
+        .unwrap()
+        .write_all(control.to_string().as_bytes())
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&hook.wait_with_output().unwrap().stdout).unwrap(),
+        serde_json::json!({})
+    );
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            use rmcp::service::{ClientLifecycleMode, ClientServiceExt};
+            struct Client;
+            impl rmcp::ClientHandler for Client {}
+            let transport =
+                rmcp::transport::StreamableHttpClientTransport::from_uri(format!("{}/mcp", fixture.endpoint));
+            let client = Client
+                .serve_with_lifecycle(transport, ClientLifecycleMode::Initialize)
+                .await
+                .unwrap();
+            let mut params = rmcp::model::CallToolRequestParams::default();
+            params.name = "execute_remedy_plan".into();
+            params.arguments = serde_json::json!({"offer_id": offer}).as_object().cloned();
+            let result = client.call_tool(params).await.unwrap();
+            assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+            client.cancel().await.unwrap();
+        });
+    writer.write_all(b"p").unwrap();
+    read_until(&mut terminal, "trust:suspicious  audience:internal");
+    pair.master
+        .resize(portable_pty::PtySize {
+            rows: 15,
+            cols: 70,
+            ..size
+        })
+        .unwrap();
+    terminal.screen_mut().set_size(15, 70);
+    std::thread::sleep(Duration::from_millis(100));
+    writer.write_all(b"r").unwrap();
+    read_until(&mut terminal, "viewport:70x13");
+    assert!(
+        terminal
+            .screen()
+            .contents()
+            .contains("trust:suspicious  audience:internal")
+    );
+    writer.write_all(if interrupt { b"t" } else { b"q" }).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "the terminal wrapper did not exit");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(status.exit_code(), if interrupt { 143 } else { 7 });
+    while let Ok(bytes) = receive.try_recv() {
+        terminal.process(&bytes);
+    }
+    assert!(!terminal.screen().alternate_screen());
+    assert!(!terminal.screen().hide_cursor());
+    assert_eq!(pair.master.get_termios().unwrap(), original);
+}
+
+#[test]
 fn codex_hook_guard_denies_a_worker_failure() {
     use std::process::Stdio;
 
