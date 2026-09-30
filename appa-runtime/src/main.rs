@@ -289,7 +289,7 @@ async fn codex_prepare(
             );
         }
     };
-    let event = match appa_runtime_api::WireEvent::read(&body).and_then(|wire| wire.into_event(&state.adapter)) {
+    let mut event = match appa_runtime_api::WireEvent::read(&body).and_then(|wire| wire.into_event(&state.adapter)) {
         Ok(Some(accepted)) => accepted.event,
         _ => {
             return (
@@ -304,6 +304,18 @@ async fn codex_prepare(
             Json(serde_json::json!({"error": "not a Codex command call"})),
         );
     }
+    let specification = match crate::codex::context::prepare(&mut event, &request.shell) {
+        Ok(specification) => specification,
+        Err(error) => return (StatusCode::CONFLICT, Json(serde_json::json!({"error": error}))),
+    };
+    // Retain the original wire identity and inventory, but classify the actual
+    // command and directory instead of the transport header and session root.
+    let mut normalized = request.event;
+    if let appa_runtime_api::HookEvent::ToolCall { call, .. } = &event {
+        normalized["arguments"] = serde_json::from_str(call.arguments.get()).expect("normalized arguments are JSON");
+        normalized["cwd"] = serde_json::json!(call.cwd);
+    }
+    let body = serde_json::to_vec(&normalized).expect("the normalized event serializes");
     let executable = match std::env::current_exe() {
         Ok(path) => path,
         Err(_) => {
@@ -317,7 +329,7 @@ async fn codex_prepare(
     if status == 200 && answer.get("decision").and_then(serde_json::Value::as_str) == Some("allow_call") {
         match state
             .codex_jobs
-            .create(&event, &executable, &state.codex_url, &request.shell)
+            .create(&event, &executable, &state.codex_url, specification)
         {
             Ok(wrapper) => {
                 answer["wrapper"] = serde_json::Value::String(wrapper);
@@ -352,7 +364,7 @@ async fn codex_prepare(
 async fn codex_consume(
     State(state): State<AppState>,
     AxumPath(handle): AxumPath<String>,
-) -> Result<Json<crate::codex::jobs::Specification>, StatusCode> {
+) -> Result<Json<crate::codex::context::Specification>, StatusCode> {
     if state.adapter.name != AdapterName::Codex {
         return Err(StatusCode::NOT_FOUND);
     }

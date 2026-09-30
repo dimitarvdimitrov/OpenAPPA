@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::loopback_http::{Deadline, Endpoint, request_for_sandboxed_wrapper};
 
+use super::context::{Specification, validate_shell};
 use super::jobs::MAX_OUTPUT;
 
 #[cfg(unix)]
@@ -53,13 +54,6 @@ fn kill_child_group(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
-#[derive(Deserialize)]
-struct Specification {
-    command: String,
-    shell: String,
-    cwd: String,
-}
-
 #[derive(Serialize)]
 struct Report {
     stdout: String,
@@ -95,16 +89,8 @@ fn execute(specification: Specification, mut still_authorized: impl FnMut() -> b
     if specification.command.is_empty() || specification.cwd.is_empty() {
         return Err("the approved command specification is incomplete".into());
     }
+    validate_shell(&specification.shell)?;
     let shell = std::path::Path::new(&specification.shell);
-    if !shell.is_absolute()
-        || !matches!(
-            shell.file_name().and_then(|name| name.to_str()),
-            Some("sh" | "bash" | "zsh")
-        )
-        || !shell.is_file()
-    {
-        return Err("the approved command shell is unavailable".into());
-    }
     // Child stdin stays closed. This proxy supports finite commands without
     // later input.
     #[cfg(unix)]
@@ -114,7 +100,7 @@ fn execute(specification: Specification, mut still_authorized: impl FnMut() -> b
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        command.arg("-lc");
+        command.arg(if specification.login { "-lc" } else { "-c" });
         // A fresh session removes the inherited controlling terminal. The
         // child cannot bypass our pipes by opening /dev/tty.
         unsafe {
@@ -140,7 +126,13 @@ fn execute(specification: Specification, mut still_authorized: impl FnMut() -> b
         });
     }
     let mut child = command
-        .arg(&specification.command)
+        // Login startup files can change directories. Restore the approved
+        // directory after startup, before the actual command.
+        .arg(format!(
+            "cd {} || exit $?\n{}",
+            super::jobs::shell_literal(&specification.cwd),
+            specification.command
+        ))
         .current_dir(&specification.cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -320,6 +312,7 @@ mod tests {
                     marker.display()
                 ),
                 shell: "/bin/sh".into(),
+                login: true,
                 cwd: dir.path().to_string_lossy().into_owned(),
             },
             || true,
@@ -346,6 +339,7 @@ mod tests {
                     pid_file.display()
                 ),
                 shell: "/bin/sh".into(),
+                login: true,
                 cwd: dir.path().to_string_lossy().into_owned(),
             },
             || true,
@@ -372,6 +366,7 @@ mod tests {
             Specification {
                 command,
                 shell: "/bin/sh".into(),
+                login: true,
                 cwd: dir.path().to_string_lossy().into_owned(),
             },
             || started.elapsed() < Duration::from_millis(300),
@@ -390,6 +385,7 @@ mod tests {
             Specification {
                 command: format!("touch '{}'", marker.display()),
                 shell: "/bin/sh".into(),
+                login: true,
                 cwd: dir.path().to_string_lossy().into_owned(),
             },
             || false,

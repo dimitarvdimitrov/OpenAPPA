@@ -10,12 +10,47 @@ It checks the rewritten wrapper, the admitted result, early output, and a forged
 
 ## Scope
 
-The proxy supports finite Unix commands without later input. It starts the selected `sh`, `bash`, or `zsh` login shell without a controlling terminal.
+The proxy supports finite Unix commands without later input. It starts the selected `sh`, `bash`, or `zsh` shell without a controlling terminal.
 It closes child stdin and buffers at most 1 MiB of combined output. It checks job status while the child runs.
 
 Native Windows commands, later input, PTY programs, prompts, full-screen tools, daemonized children, and unsupported shell modes remain outside this proxy scope.
 The protected launcher requires a Codex sandbox profile with the disclosed `127.0.0.1` HTTP exception.
 The hook cannot guarantee coverage if Codex skips or disables it.
+
+## Execution context
+
+Codex supplies the session directory and the command to Bash hooks.
+The documented hook input does not include the native `workdir`, `shell`, or `login` options.
+APPA cannot recover these omitted options from the hook.
+Plain commands use the hook's session directory and the hook process's `$SHELL` with `-lc`.
+
+Native execution options alone therefore do not select the APPA child's execution context.
+The [official hook reference](https://learn.chatgpt.com/docs/hooks) describes these input fields.
+
+The first command line can supply an explicit APPA execution header:
+
+```sh
+# appa-codex-exec-v1 {"workdir":"/absolute/project/nested","shell":"/bin/bash","login":false}
+pwd
+cat selected.txt
+```
+
+This header is the authoritative execution context for the APPA child.
+All three fields are required. The directory must exist and use an absolute path.
+The shell must use an absolute path to an existing `sh`, `bash`, or `zsh` file.
+
+`login=false` selects `-c`. `login=true` selects `-lc` and permits normal shell startup files.
+APPA restores the declared directory after shell startup, before the command.
+Startup files can still alter the environment or execute their own commands.
+
+APPA removes the header before policy classification and supplies the declared directory to context providers.
+Command selectors and annotators receive the actual command, shell, login mode, and directory.
+Malformed headers, duplicate fields, repeated headers, unknown fields, and conflicting supplied hook options cause refusal.
+Environment overrides and terminal commands remain unsupported.
+Without an active hook, the header is only a shell comment and supplies no execution context.
+
+For a plain command, an explicit `cd /absolute/project/nested` can select a directory within the command itself.
+The header also supplies the correct initial directory to policy context providers.
 
 ## Later input on Codex CLI 0.159.2
 
