@@ -28,7 +28,7 @@ Connect an existing agent through its lifecycle hooks. The hooks pause tool exec
 
 APPA runs alongside the agent as a local process, sidecar, or shared service. For a new harness, your coding agent can build the hook integration and runtime adapter using the existing implementations as references.
 
-[Claude Code](/claude-code) is a ready-made example for a coding agent; [kagent](/kagent) shows the same approach for Kubernetes agents. Their dedicated guides cover setup and configuration.
+[Claude Code](/claude-code) provides a coding agent integration. [Codex](/codex) documents a separate local integration and its current host-mode limit. [kagent](/kagent) shows the approach for Kubernetes agents.
 
 Ask your coding agent to run [this prompt](#start-in-your-repository) to implement it.
 

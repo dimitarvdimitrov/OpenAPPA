@@ -24,6 +24,21 @@ fn the_router_opens_with_the_frontmatter_the_installer_recognizes() {
 }
 
 #[test]
+fn the_codex_reference_finds_its_policy_and_reports_the_shell_gate() {
+    let reference = read("references/codex.md");
+    for marker in [
+        "appa describe --adapter codex",
+        "Config:",
+        "code-mode host is disabled",
+        "report policy inspection as unavailable",
+        "Do not enable the code-mode host",
+        "mcp/<server>/<tool>",
+    ] {
+        assert!(reference.contains(marker), "the Codex guide names {marker:?}");
+    }
+}
+
+#[test]
 fn the_kagent_reference_carries_the_full_flow() {
     let reference = read("references/kagent.md");
     for marker in [
