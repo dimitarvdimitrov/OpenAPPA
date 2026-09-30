@@ -315,7 +315,8 @@ mod tests {
         let report = execute(
             Specification {
                 command: format!(
-                    "dd if=/dev/zero bs=1024 count=1025 2>/dev/null; sleep 2; touch '{}'",
+                    "dd if=/dev/zero bs=1024 count={} 2>/dev/null; sleep 2; touch '{}'",
+                    MAX_OUTPUT / 1024 + 1,
                     marker.display()
                 ),
                 shell: "/bin/sh".into(),

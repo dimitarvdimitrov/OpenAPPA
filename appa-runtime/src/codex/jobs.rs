@@ -16,7 +16,9 @@ const LIFETIME: Duration = Duration::from_secs(600);
 const MAX_JOBS: usize = 128;
 const MAX_RECENT_JOBS: usize = 512;
 const MAX_TOMBSTONES: usize = 10_000;
-pub(crate) const MAX_OUTPUT: usize = 1024 * 1024;
+pub(crate) const MAX_OUTPUT: usize = 100 * 1024 * 1024;
+// Base64 expands the output. Reserve space for JSON and HTTP headers.
+pub(crate) const MAX_REPORT_BYTES: usize = MAX_OUTPUT.div_ceil(3) * 4 + 64 * 1024;
 
 pub(crate) struct Jobs(Mutex<HashMap<String, Job>>, Option<Mutex<Connection>>);
 
