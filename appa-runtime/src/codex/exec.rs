@@ -1,4 +1,4 @@
-//! The sandboxed half of a Codex command job. Child bytes stay private until
+//! The sandboxed half of a Codex command. Child bytes stay private until
 //! the runtime admits a complete result.
 
 use std::io::{Read, Write};
@@ -44,14 +44,44 @@ fn was_cancelled() -> bool {
 }
 
 #[cfg(unix)]
-fn kill_child_group(child: &mut std::process::Child) {
+fn kill_child_group(child: &mut ChildGroup) {
+    if child.cleaned {
+        return;
+    }
     unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
     let _ = child.kill();
+    child.cleaned = true;
 }
 
 #[cfg(not(unix))]
-fn kill_child_group(child: &mut std::process::Child) {
+fn kill_child_group(child: &mut ChildGroup) {
     let _ = child.kill();
+    child.cleaned = true;
+}
+
+struct ChildGroup {
+    child: std::process::Child,
+    cleaned: bool,
+}
+
+impl std::ops::Deref for ChildGroup {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+
+impl std::ops::DerefMut for ChildGroup {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+
+impl Drop for ChildGroup {
+    fn drop(&mut self) {
+        kill_child_group(self);
+        let _ = self.child.wait();
+    }
 }
 
 #[derive(Serialize)]
@@ -90,6 +120,7 @@ fn execute(specification: Specification, mut still_authorized: impl FnMut() -> b
         return Err("the approved command specification is incomplete".into());
     }
     validate_shell(&specification.shell)?;
+    super::containment::check_text(&specification.command)?;
     let shell = std::path::Path::new(&specification.shell);
     // Child stdin stays closed. This proxy supports finite commands without
     // later input.
@@ -108,6 +139,8 @@ fn execute(specification: Specification, mut still_authorized: impl FnMut() -> b
                 if libc::setsid() < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
+                #[cfg(target_os = "linux")]
+                super::containment::restrict()?;
                 Ok(())
             });
         }
@@ -125,7 +158,7 @@ fn execute(specification: Specification, mut still_authorized: impl FnMut() -> b
             exit_code: None,
         });
     }
-    let mut child = command
+    let child = command
         // Login startup files can change directories. Restore the approved
         // directory after startup, before the actual command.
         .arg(format!(
@@ -139,6 +172,7 @@ fn execute(specification: Specification, mut still_authorized: impl FnMut() -> b
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("the approved command could not start: {error}"))?;
+    let mut child = ChildGroup { child, cleaned: false };
     let total = Arc::new(AtomicUsize::new(0));
     let overflow = Arc::new(AtomicBool::new(false));
     let stdout = child.stdout.take().ok_or("the child has no stdout pipe")?;
@@ -185,10 +219,8 @@ fn execute(specification: Specification, mut still_authorized: impl FnMut() -> b
     // The shell may have exited while a background descendant still holds a
     // pipe open. Terminate the original group before settling the result.
     kill_child_group(&mut child);
-    // A daemonized descendant can escape the group while retaining a pipe.
-    // Bound the drain and settle indeterminately. Such descendants are outside
-    // this finite, non-daemonizing command path; a Unix process group cannot
-    // contain a child that creates its own session.
+    // Bound capture even if a platform escape or an external process retains
+    // a pipe. A drain timeout is not evidence of descendant teardown.
     let stdout = match out_rx.recv_timeout(Duration::from_secs(1)) {
         Ok(Ok(bytes)) => bytes,
         _ => {
@@ -250,19 +282,26 @@ fn run_inner(url: &str, handle: &str) -> Result<i32, String> {
     let specification: Specification =
         serde_json::from_slice(&answer.body).map_err(|error| format!("invalid Codex job specification: {error}"))?;
     let running_path = format!("/codex/job/{handle}/running");
-    let report = match execute(specification, || {
+    let result = execute(specification, || {
         request("GET", &running_path, b"", 3).is_ok_and(|answer| answer.status == 204)
-    }) {
-        Ok(report) => report,
-        Err(_) => Report {
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: None,
-        },
+    });
+    let (report, failure) = match result {
+        Ok(report) => (report, None),
+        Err(error) => (
+            Report {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: None,
+            },
+            Some(error),
+        ),
     };
     let body = serde_json::to_vec(&report).map_err(|error| error.to_string())?;
     let path = format!("/codex/job/{handle}/report");
     let answer = request("POST", &path, &body, 120)?;
+    if let Some(error) = failure {
+        return Err(error);
+    }
     if !answer.is_success() {
         return Err(format!(
             "the runtime withheld the command result (status {})",
@@ -324,36 +363,192 @@ mod tests {
         assert!(!marker.exists());
     }
 
-    #[test]
-    fn escaped_descendant_cannot_hold_capture_open_indefinitely() {
-        if Command::new("python3").arg("--version").output().is_err() {
-            return;
+    fn alive(pid: i32) -> bool {
+        let output = Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&output.stdout);
+        !state.trim().is_empty() && !state.trim().starts_with('Z')
+    }
+
+    struct ProbeProcess(i32);
+    impl Drop for ProbeProcess {
+        fn drop(&mut self) {
+            // Clean up even if an assertion exposes a containment regression.
+            unsafe { libc::kill(self.0, libc::SIGKILL) };
         }
+    }
+
+    #[test]
+    fn ordinary_background_work_can_finish_before_shell_exit() {
         let dir = tempfile::tempdir().unwrap();
-        let pid_file = dir.path().join("escaped.pid");
-        let started = Instant::now();
         let report = execute(
             Specification {
-                command: format!(
-                    "python3 -c 'import os,time; os.setsid(); open(\"{}\",\"w\").write(str(os.getpid())); time.sleep(5)' & sleep 0.3",
-                    pid_file.display()
-                ),
+                command: "(sleep 0.1; echo done > finished; printf child) & wait; printf parent".into(),
                 shell: "/bin/sh".into(),
-                login: true,
+                login: false,
                 cwd: dir.path().to_string_lossy().into_owned(),
             },
             || true,
         )
         .unwrap();
-        assert_eq!(report.exit_code, None);
-        assert!(started.elapsed() < Duration::from_secs(3));
-        // The scoped proxy does not claim to contain a child that calls
-        // setsid(). Clean up this deliberate escape so the test leaves none.
-        if let Ok(pid) = std::fs::read_to_string(&pid_file)
-            && let Ok(pid) = pid.parse::<i32>()
-        {
-            unsafe { libc::kill(pid, libc::SIGKILL) };
+        assert_eq!(report.exit_code, Some(0));
+        assert_eq!(std::fs::read_to_string(dir.path().join("finished")).unwrap(), "done\n");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.decode(report.stdout).unwrap(),
+            b"childparent"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_spawn_attributes_are_blocked_and_ordinary_threads_still_work() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("spawn.py"),
+            "import os,ctypes,threading\nassert ctypes.CDLL(None).prctl(39,0,0,0,0)==1\nfor options in [{'setsid':True},{'setpgroup':0}]:\n try:\n  p=os.posix_spawn('/bin/sh',['sh','-c','sleep 0.3; echo escaped > late'],os.environ,**options)\n except PermissionError:\n  continue\n os.kill(p,9); os.waitpid(p,0)\n raise AssertionError('spawn attributes escaped')\nt=threading.Thread(target=lambda: open('thread','w').write('done'))\nt.start(); t.join()\n"
+        ).unwrap();
+        let report = execute(
+            Specification {
+                command: "python3 spawn.py".into(),
+                shell: "/bin/sh".into(),
+                login: false,
+                cwd: dir.path().to_string_lossy().into_owned(),
+            },
+            || true,
+        )
+        .unwrap();
+        assert_eq!(
+            report.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&base64::engine::general_purpose::STANDARD.decode(report.stderr).unwrap())
+        );
+        assert_eq!(std::fs::read_to_string(dir.path().join("thread")).unwrap(), "done");
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(!dir.path().join("late").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scripts_cannot_escape_group_cleanup_with_or_without_output_pipes() {
+        assert!(
+            Command::new("python3")
+                .arg("--version")
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        for operation in ["os.setsid()", "os.setpgid(0, 0)"] {
+            for pipes in [
+                "pass",
+                "os.dup2(os.open(os.devnull, os.O_WRONLY), 1); os.dup2(1, 2)",
+                "os.close(1); os.close(2)",
+            ] {
+                for cancelled in [false, true] {
+                    let dir = tempfile::tempdir().unwrap();
+                    // The attempted detach lives in a script, outside the text check.
+                    // Catch EPERM and keep running to prove cleanup kills the child.
+                    std::fs::write(dir.path().join("child.py"), format!(
+                        "import os,time\ntry:\n {operation}\nexcept PermissionError:\n open('blocked','w').write('yes')\n{pipes}\nopen('pid','w').write(str(os.getpid()))\nopen('ready','w').write('yes')\ntime.sleep(1.2)\nopen('late','w').write('escaped')\n"
+                    )).unwrap();
+                    let command = format!(
+                        "python3 child.py & i=0; while [ ! -f ready ] && [ \"$i\" -lt 200 ]; do sleep 0.01; i=$((i+1)); done; {}",
+                        if cancelled { "wait" } else { ":" }
+                    );
+                    let report = execute(
+                        Specification {
+                            command,
+                            shell: "/bin/sh".into(),
+                            login: false,
+                            cwd: dir.path().to_string_lossy().into_owned(),
+                        },
+                        || !cancelled || !dir.path().join("ready").exists(),
+                    )
+                    .unwrap();
+                    let pid = std::fs::read_to_string(dir.path().join("pid"))
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    let process = ProbeProcess(pid);
+                    assert!(dir.path().join("blocked").exists(), "{operation} escaped");
+                    assert_eq!(report.exit_code, if cancelled { None } else { Some(0) });
+                    std::thread::sleep(Duration::from_millis(1300));
+                    assert!(!alive(process.0), "descendant {} survived", process.0);
+                    assert!(!dir.path().join("late").exists(), "descendant wrote after cleanup");
+                }
+            }
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_session_escape_remains_a_limit_with_any_pipe_mode() {
+        for pipes in [
+            "pass",
+            "os.dup2(os.open(os.devnull, os.O_WRONLY), 1); os.dup2(1, 2)",
+            "os.close(1); os.close(2)",
+        ] {
+            for cancelled in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                std::fs::write(dir.path().join("escape.py"), format!(
+                    "import os,time\nos.setsid()\n{pipes}\nopen('pid','w').write(str(os.getpid()))\nopen('ready','w').write('yes')\ntime.sleep(2)\nopen('late','w').write('escaped')\n"
+                )).unwrap();
+                let report = execute(Specification {
+                    command: format!("python3 escape.py & i=0; while [ ! -f ready ] && [ $i -lt 200 ]; do sleep 0.01; i=$((i+1)); done; {}", if cancelled { "wait" } else { ":" }),
+                    shell: "/bin/sh".into(), login: false,
+                    cwd: dir.path().to_string_lossy().into_owned(),
+                }, || !cancelled || !dir.path().join("ready").exists()).unwrap();
+                let process = ProbeProcess(
+                    std::fs::read_to_string(dir.path().join("pid"))
+                        .unwrap()
+                        .parse()
+                        .unwrap(),
+                );
+                assert_eq!(
+                    report.exit_code,
+                    if cancelled || pipes == "pass" { None } else { Some(0) }
+                );
+                assert!(alive(process.0), "update the macOS containment limit if this changes");
+                std::thread::sleep(Duration::from_millis(2100));
+                assert!(dir.path().join("late").exists(), "the escaped process could not write");
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_spawn_attributes_remain_an_explicit_containment_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        // POSIX_SPAWN_SETSID also bypasses the syscall-only Seatbelt design
+        // evaluated for macOS. Keep this evidence until the boundary changes.
+        std::fs::write(dir.path().join("spawn.py"),
+            "import os\np=os.posix_spawn('/bin/sh',['sh','-c','sleep 0.3; echo survived > late'],os.environ,setsid=True)\nopen('pid','w').write(str(p))\n"
+        ).unwrap();
+        let report = execute(
+            Specification {
+                command: "python3 spawn.py >/dev/null 2>&1".into(),
+                shell: "/bin/sh".into(),
+                login: false,
+                cwd: dir.path().to_string_lossy().into_owned(),
+            },
+            || true,
+        )
+        .unwrap();
+        let process = ProbeProcess(
+            std::fs::read_to_string(dir.path().join("pid"))
+                .unwrap()
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(report.exit_code, Some(0));
+        assert!(
+            alive(process.0),
+            "update the documented macOS limit if this boundary changes"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(dir.path().join("late").exists());
     }
 
     #[test]

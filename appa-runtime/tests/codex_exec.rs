@@ -604,3 +604,158 @@ fn post_hook_is_withheld_after_runtime_restart() {
     third.kill().unwrap();
     third.wait().unwrap();
 }
+
+// These tests use a permissive policy. Protection must come from the proxy.
+#[test]
+fn detached_launch_refusal_and_lifecycle_cleanup_need_no_deny_policy() {
+    use std::process::{Child, Stdio};
+    use std::time::{Duration, Instant};
+
+    struct Cleanup(Child);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    struct Descendant(i32);
+    impl Drop for Descendant {
+        fn drop(&mut self) {
+            unsafe { libc::kill(self.0, libc::SIGKILL) };
+        }
+    }
+    for end in ["Interrupt", "Stop", "UserPromptSubmit", "restart"] {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("policy.toml");
+        let db = dir.path().join("appa.db");
+        std::fs::write(&config, "[policy]\nversion = 2\n[[policy.tool]]\nname = \"host/codex/appa_exec\"\n[externals]\ntimeout_ms = 5000\nmax_body_bytes = 65536\n").unwrap();
+        let start = |address: &str| {
+            let mut child = Command::new(env!("CARGO_BIN_EXE_appa"))
+                .args(["runtime", "--adapter", "codex", "--config"])
+                .arg(&config)
+                .arg("--db")
+                .arg(&db)
+                .args(["--listen", address])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let url = common::served_url(&mut child);
+            (Cleanup(child), url)
+        };
+        let (mut runtime, url) = start("127.0.0.1:0");
+        let hook = |event: serde_json::Value| {
+            let mut child = Command::new(env!("CARGO_BIN_EXE_appa"))
+                .args(["hook", "--adapter", "codex", "--deployment-url", &url])
+                .env("APPA_GATE", "1")
+                .env("SHELL", "/bin/sh")
+                .env_remove("APPA_RUNTIME_URL")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(event.to_string().as_bytes())
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            if !output.status.success() {
+                let reason = String::from_utf8_lossy(&output.stderr).into_owned();
+                assert!(
+                    reason.contains("Detached background processes are unsupported."),
+                    "{reason}"
+                );
+                return serde_json::json!({"refusal":reason});
+            }
+            if output.stdout.is_empty() {
+                return serde_json::json!({});
+            }
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+        };
+        let pre_event = |id: &str, command: &str| {
+            serde_json::json!({
+                "hook_event_name":"PreToolUse", "session_id":"lifetime", "tool_name":"Bash",
+                "tool_use_id":id, "cwd":dir.path(), "tool_input":{"command":command}
+            })
+        };
+        let refused = hook(pre_event("refused", "touch never; setsid sleep 3"));
+        assert!(refused.get("refusal").is_some(), "{refused}");
+        assert!(refused.to_string().contains("Run this command in the foreground."));
+        assert!(!dir.path().join("never").exists());
+
+        // Catch the denied syscall. Keep the child alive with closed pipes so
+        // this test checks teardown independently of output capture.
+        let detach = if cfg!(target_os = "linux") {
+            "try:\n os.setsid()\nexcept PermissionError:\n pass\n"
+        } else {
+            ""
+        };
+        std::fs::write(dir.path().join("child.py"),
+            format!("import os,time\n{detach}os.close(1); os.close(2)\nopen('pid','w').write(str(os.getpid()))\nopen('ready','w').write('yes')\ntime.sleep(2)\nopen('late','w').write('survived')\n")
+        ).unwrap();
+        let pre = hook(pre_event("running", "python3 child.py & wait"));
+        let wrapper = pre["hookSpecificOutput"]["updatedInput"]["command"].as_str().unwrap();
+        let mut command = Cleanup(
+            Command::new("/bin/sh")
+                .args(["-c", wrapper])
+                .current_dir(dir.path())
+                .env_remove("HTTP_PROXY")
+                .env_remove("http_proxy")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !dir.path().join("ready").exists() && Instant::now() < deadline {
+            assert!(
+                command.0.try_wait().unwrap().is_none(),
+                "wrapper exited before the child started"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(dir.path().join("ready").exists());
+        let process = Descendant(
+            std::fs::read_to_string(dir.path().join("pid"))
+                .unwrap()
+                .parse()
+                .unwrap(),
+        );
+        if end == "restart" {
+            runtime.0.kill().unwrap();
+            runtime.0.wait().unwrap();
+            // Bind the replacement to the same URL. The old handle must fail
+            // even when its authorization poll reaches the replacement runtime.
+            let (replacement, _) = start(url.strip_prefix("http://").unwrap());
+            runtime = replacement;
+        } else {
+            hook(serde_json::json!({"hook_event_name":end, "session_id":"lifetime", "prompt":"new prompt"}));
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while command.0.try_wait().unwrap().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            command.0.try_wait().unwrap().is_some(),
+            "{end} did not stop the wrapper"
+        );
+        std::thread::sleep(Duration::from_millis(2100));
+        let state = Command::new("ps")
+            .args(["-o", "stat=", "-p", &process.0.to_string()])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&state.stdout);
+        assert!(
+            state.trim().is_empty() || state.trim().starts_with('Z'),
+            "{end}: descendant survived"
+        );
+        assert!(
+            !dir.path().join("late").exists(),
+            "{end}: descendant wrote after cancellation"
+        );
+        drop(runtime);
+    }
+}

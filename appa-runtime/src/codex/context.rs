@@ -103,6 +103,7 @@ pub(crate) fn prepare(event: &mut HookEvent, default_shell: &str) -> Result<Spec
         return Err("the Codex working directory must be an existing absolute directory".into());
     }
     validate_shell(&shell)?;
+    super::containment::check_text(&command)?;
     // Selectors, annotators, and relative-path context providers all see the
     // exact command and context that the sandboxed child will receive.
     arguments["command"] = serde_json::json!(command);
