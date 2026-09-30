@@ -13,10 +13,9 @@ command remains indeterminate with reservations retained, and its diagnostics
 remain withheld. Nonzero commands under the effect-free contract can return
 admitted diagnostics.
 
-The policy reserves `host/codex/appa_stdin` for later input checks. The current
-wrapper starts each child with null stdin and does not forward later input.
+The wrapper starts each child with null stdin. It does not forward later input.
 
-Supply finite input in the original command. Do not rely on interactive prompts.
+Put required input in the original command. Do not rely on interactive prompts.
 
 Selectors match the command text, not every command's resolved file path or
 runtime behavior. Shell expansions, aliases, and scripts rely on the

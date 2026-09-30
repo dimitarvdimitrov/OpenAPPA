@@ -56,11 +56,10 @@ async fn composed_default_constrains_commands_and_refuses_unverified_subagents()
         "credential selectors must precede the generic command"
     );
     assert_eq!(tools[command]["annotator"].as_str(), Some("codex.command-requirements"));
-    assert!(
-        !tools
-            .iter()
-            .any(|tool| matches!(tool["name"].as_str(), Some("*") | Some("host/codex/spawn_agent")))
-    );
+    assert!(!tools.iter().any(|tool| matches!(
+        tool["name"].as_str(),
+        Some("*") | Some("host/codex/spawn_agent") | Some("host/codex/appa_stdin")
+    )));
     assert_eq!(
         policy["deployment"]["confined_results"][0].as_str(),
         Some("host/codex/appa_exec")
@@ -138,7 +137,7 @@ async fn composed_default_constrains_commands_and_refuses_unverified_subagents()
         "unverified spawn: {spawn:?}"
     );
 
-    for (index, name) in ["send_input", "send_message", "unknown_host_tool"]
+    for (index, name) in ["appa_stdin", "send_input", "send_message", "unknown_host_tool"]
         .into_iter()
         .enumerate()
     {
