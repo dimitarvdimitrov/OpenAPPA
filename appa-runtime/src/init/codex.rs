@@ -534,11 +534,11 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
             "-c",
             "features.network_proxy=true",
             "-c",
+            "features.hooks=true",
+            "-c",
             "features.apps=false",
             "-c",
             "features.browser_use=false",
-            "-c",
-            "features.code_mode_host=true",
             "-c",
             "features.multi_agent=false",
         ])
@@ -580,7 +580,7 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
                 return Err("a Codex option is missing its value");
             };
             let value_text = value.to_string_lossy();
-            if (option == "--disable" && matches!(value_text.as_ref(), "hooks" | "network_proxy" | "code_mode_host"))
+            if (option == "--disable" && matches!(value_text.as_ref(), "hooks" | "network_proxy"))
                 || (option == "--enable" && matches!(value_text.as_ref(), "apps" | "browser_use" | "multi_agent"))
                 || (matches!(option.as_ref(), "-c" | "--config") && forbidden_config_override(&value_text))
             {
@@ -590,12 +590,10 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
             index += 2;
             continue;
         }
-        if matches!(
-            option.as_ref(),
-            "--disable=hooks" | "--disable=network_proxy" | "--disable=code_mode_host"
-        ) || ["apps", "browser_use", "multi_agent"]
-            .iter()
-            .any(|feature| option == format!("--enable={feature}"))
+        if matches!(option.as_ref(), "--disable=hooks" | "--disable=network_proxy")
+            || ["apps", "browser_use", "multi_agent"]
+                .iter()
+                .any(|feature| option == format!("--enable={feature}"))
             || option.strip_prefix("--config=").is_some_and(forbidden_config_override)
         {
             return Err("a Codex option disables hooks or replaces the protected permission profile");
@@ -620,7 +618,6 @@ fn forbidden_config_override(value: &str) -> bool {
     key == "default_permissions"
         || (matches!(key, "features.hooks" | "features.network_proxy") && setting == "false")
         || (matches!(key, "features.apps" | "features.browser_use" | "features.multi_agent") && setting == "true")
-        || (key == "features.code_mode_host" && setting == "false")
 }
 
 fn sandbox_probe(binary: &Path, url: &str, options: &[OsString]) -> Result<(), String> {
@@ -754,8 +751,6 @@ mod tests {
     fn launcher_rejects_overrides_of_protected_controls() {
         for arguments in [
             vec!["--disable", "hooks"],
-            vec!["--disable", "code_mode_host"],
-            vec!["--config=features.code_mode_host=false"],
             vec!["--enable", "browser_use"],
             vec!["-c", "default_permissions = ':workspace'"],
             vec!["--config=features.network_proxy=false"],
@@ -771,5 +766,13 @@ mod tests {
             OsString::from("--no-alt-screen"),
         ];
         assert_eq!(probe_options(&allowed).unwrap(), allowed[..2]);
+        for arguments in [
+            vec!["--disable", "code_mode_host"],
+            vec!["--disable=code_mode_host"],
+            vec!["--config=features.code_mode_host=false"],
+        ] {
+            let arguments = arguments.into_iter().map(OsString::from).collect::<Vec<_>>();
+            assert!(probe_options(&arguments).is_ok(), "{arguments:?}");
+        }
     }
 }

@@ -26,7 +26,9 @@ It preserves unrelated hooks, MCP servers, and permission profiles.
 The default policy includes the Codex battery and uses the saved Codex login for annotations.
 
 Codex skips hooks that lack trust. A changed hook needs another review in `/hooks`.
-The launcher enables `code_mode_host=true` for shell access.
+The launcher inherits the user's `code_mode_host` setting.
+It enables hooks for APPA policy checks.
+Codex CLI 0.159.2 enables shell access by default.
 The hook supervisor returns a Codex block if the APPA worker fails or exceeds its deadline.
 Codex can still run an original command if it skips the hook or the supervisor itself fails.
 

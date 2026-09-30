@@ -56,7 +56,7 @@ The command wrapper needs loopback HTTP access from Codex's command sandbox.
 The installed `appa` profile extends `:workspace` and allows `127.0.0.1` through Codex's proxy.
 That host rule covers all ports on the allowed host.
 The sandbox HTTP check refuses profiles that block the rule.
-The launcher enables the shell and checks runtime HTTP access before it starts Codex.
+The launcher inherits Codex's shell setting and checks runtime HTTP access before it starts Codex.
 The hook supervisor denies a tool call if its APPA worker fails or exceeds its deadline.
 Codex can skip an untrusted hook or run an original command if the supervisor fails.
 Native Windows commands need a separate sandbox and console probe.

@@ -130,7 +130,7 @@ fn direct_codex_activation_reinstall_and_removal_preserve_both_profiles() {
 }
 
 #[test]
-fn launcher_enables_host_mode_after_the_sandbox_check() {
+fn launcher_inherits_host_mode_after_the_sandbox_check() {
     use std::os::unix::fs::PermissionsExt;
 
     let fixture = Fixture::new();
@@ -174,14 +174,19 @@ fn launcher_enables_host_mode_after_the_sandbox_check() {
     assert!(!strict.status.success());
     assert!(String::from_utf8_lossy(&strict.stderr).contains("command sandbox cannot reach"));
 
-    let output = launch().output().unwrap();
+    let output = launch()
+        .args(["--", "-c", "features.code_mode_host=false"])
+        .output()
+        .unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let calls = fs::read_to_string(calls).unwrap();
     let mut calls = calls.lines();
     assert!(calls.next().unwrap().starts_with("sandbox "));
     assert!(calls.next().unwrap().starts_with("sandbox "));
     let launch = calls.next().unwrap();
-    assert!(launch.contains("features.code_mode_host=true"), "{launch}");
+    assert!(launch.contains("features.hooks=true"), "{launch}");
+    assert!(launch.contains("features.code_mode_host=false"), "{launch}");
+    assert!(!launch.contains("features.code_mode_host=true"), "{launch}");
     assert!(calls.next().is_none());
 }
 

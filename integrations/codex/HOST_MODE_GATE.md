@@ -43,7 +43,10 @@ A crashed, malformed, timed-out, or untrusted pre-use hook did not block the syn
 Codex ran the original command in each of those four cases.
 The [official hook documentation](https://learn.chatgpt.com/docs/hooks) describes non-managed hook trust and tool coverage.
 
-`appa codex --` enables `code_mode_host=true` after its sandbox check.
+`appa codex --` inherits the user's `code_mode_host` setting after its sandbox check.
+The launcher enables hooks because APPA needs them for policy checks.
+Codex CLI 0.159.2 enables `code_mode_host` by default.
+If the user disables it, the shell is unavailable in that session.
 Each installed hook runs through `appa codex-hook` before it calls the APPA hook worker.
 The supervisor gives the worker less time than Codex gives the hook.
 It returns a valid Codex denial if the worker exits with an error, times out, or returns invalid JSON.

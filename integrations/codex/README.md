@@ -1,6 +1,8 @@
 # Codex proxy compatibility
 
-`appa codex --` enables `code_mode_host=true` and the shell.
+`appa codex --` inherits the user's `code_mode_host` setting.
+It enables hooks for APPA policy checks.
+Codex CLI 0.159.2 enables the shell by default.
 The [host compatibility gate](HOST_MODE_GATE.md) records Codex CLI 0.159.2 behavior.
 Codex can run an original command when it skips a hook or receives no valid response.
 The installed hook supervisor answers with a block if the APPA worker fails or exceeds its deadline.
