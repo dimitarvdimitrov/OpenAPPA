@@ -4,8 +4,9 @@
 It enables hooks for APPA policy checks.
 Codex CLI 0.159.2 enables the shell by default.
 The [host compatibility gate](HOST_MODE_GATE.md) records Codex CLI 0.159.2 behavior.
-Codex can run an original command when it skips a hook or receives no valid response.
-The installed hook supervisor answers with a block if the APPA worker fails or exceeds its deadline.
+The installed hook supervisor blocks a call if the APPA worker crashes, times out, or returns invalid JSON.
+Codex can run the original command if it skips an untrusted hook or the supervisor fails before its reply.
+See the [setup flow](DEMO.md) for hook trust, guide use, and the manual check before a protected-session claim.
 
 ## Probe
 

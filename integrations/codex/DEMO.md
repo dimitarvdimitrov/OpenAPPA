@@ -1,7 +1,7 @@
 # Set up OpenAPPA with Codex
 
 This flow covers installation, hook trust, launch, guide use, and removal.
-It describes the intended `appa codex --` path with the Codex shell tool available.
+The launcher sets `features.code_mode_host=true` and makes the Codex shell tool available.
 Complete the manual trust and end-to-end checks below before you describe a session as protected.
 
 ## Install
@@ -37,7 +37,8 @@ The launcher checks HTTP access from `codex sandbox` to the APPA runtime before 
 The installed permission profile permits access to `127.0.0.1` through Codex's proxy.
 That exception covers every port on the host. It does not permit public destinations.
 
-The intended launcher keeps Codex's code-mode host available for shell requests.
+The hook supervisor blocks a call if the APPA worker crashes, times out, or returns invalid JSON.
+Codex can run the original command if it skips an untrusted hook or the supervisor fails before its reply.
 The guide uses the shell tool to run `appa describe --adapter codex` and find the installed policy.
 If a command fails, record that command and its exact error. Stop the dependent steps.
 
@@ -52,6 +53,9 @@ If a command fails, record that command and its exact error. Stop the dependent 
 A visible shell marker alone does not prove that APPA checked the call and result.
 Do not describe the session as protected until a manually trusted end-to-end check passes.
 Do not use a synthetic hook-trust bypass as evidence for that check.
+
+The CLI 0.159.2 compatibility probes verified shell rewrite, the APPA proxy, sandbox HTTP, and a fallback denial.
+Those probes used temporary hooks and did not verify a manually trusted session through `/hooks`.
 
 The command wrapper also does not forward later stdin or support terminal programs.
 Native Windows command containment and strict or managed permission profiles remain unverified.

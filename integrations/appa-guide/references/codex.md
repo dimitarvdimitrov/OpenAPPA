@@ -12,7 +12,7 @@ Do not describe a regular Codex session as protected by this policy.
 4. Pass the names with `--session-tools` to `appa describe --adapter codex`.
 5. Include MCP server names as Codex reports them.
 6. Inspect the included and available batteries.
-7. Check that `http://127.0.0.1:8766/adapter` answers `codex` before you describe a session as protected.
+7. Check that `http://127.0.0.1:8766/adapter` answers `codex`.
 
 The `Config:` path from `appa describe --adapter codex` comes from the installation receipt when one exists.
 Without a receipt, the default path is `codex/appa.toml` under the platform APPA config directory.
@@ -24,6 +24,7 @@ Other MCP batteries need separate setup.
 
 Do not read secrets or unrelated files.
 Do not use Claude Code tool spellings for Codex.
+Do not describe the session as protected before a manually trusted end-to-end check passes.
 
 ## Propose and apply
 
@@ -71,8 +72,8 @@ The installed `appa` profile extends `:workspace` and allows `127.0.0.1` through
 That host rule covers all ports on the allowed host.
 The sandbox HTTP check refuses profiles that block the rule.
 The launcher inherits Codex's shell setting and checks runtime HTTP access before it starts Codex.
-The hook supervisor denies a tool call if its APPA worker fails or exceeds its deadline.
-Codex can skip an untrusted hook or run an original command if the supervisor fails.
+The hook supervisor blocks a call if its APPA worker crashes, times out, or returns invalid JSON.
+Codex can run the original command if it skips an untrusted hook or the supervisor fails before its reply.
 Native Windows commands need a separate sandbox and console probe.
 
 Do not disable the filesystem sandbox, allow public hosts, or bypass hook trust to make the HTTP check pass.

@@ -28,11 +28,10 @@ fn the_codex_reference_finds_its_policy_and_requires_a_manual_check() {
     let reference = read("references/codex.md");
     for marker in [
         "appa describe --adapter codex",
-        "Config:",
-        "shell tool available through the code-mode host",
-        "report the exact command and error",
+        "features.code_mode_host=true",
+        "APPA worker crashes, times out, or returns invalid JSON",
+        "supervisor fails before its reply",
         "manually trusted end-to-end check",
-        "mcp/<server>/<tool>",
     ] {
         assert!(reference.contains(marker), "the Codex guide names {marker:?}");
     }
