@@ -38,7 +38,7 @@ fn call(name: &str, input: serde_json::Value) -> ProposedCall {
 }
 
 #[tokio::test]
-async fn composed_default_constrains_commands_and_refuses_unverified_subagents() {
+async fn composed_default_constrains_commands_and_blocks_unverified_subagents() {
     let dir = tempfile::tempdir().unwrap();
     let (config, runtime) = composed(&dir);
     let policy = config.policy_file().value();
@@ -56,10 +56,7 @@ async fn composed_default_constrains_commands_and_refuses_unverified_subagents()
         "credential selectors must precede the generic command"
     );
     assert_eq!(tools[command]["annotator"].as_str(), Some("codex.command-requirements"));
-    assert!(!tools.iter().any(|tool| matches!(
-        tool["name"].as_str(),
-        Some("*") | Some("host/codex/spawn_agent") | Some("host/codex/appa_stdin")
-    )));
+    assert!(tools.iter().any(|tool| tool["name"].as_str() == Some("*")));
     assert_eq!(
         policy["deployment"]["confined_results"][0].as_str(),
         Some("host/codex/appa_exec")
@@ -133,13 +130,20 @@ async fn composed_default_constrains_commands_and_refuses_unverified_subagents()
     )
     .await;
     assert!(
-        matches!(spawn, HookDecision::Refuse { .. }),
+        matches!(spawn, HookDecision::DenyCall { .. }),
         "unverified spawn: {spawn:?}"
     );
 
-    for (index, name) in ["appa_stdin", "send_input", "send_message", "unknown_host_tool"]
-        .into_iter()
-        .enumerate()
+    for (index, name) in [
+        "appa_stdin",
+        "wait",
+        "send_input",
+        "send_message",
+        "close_agent",
+        "resume_agent",
+    ]
+    .into_iter()
+    .enumerate()
     {
         let decision = hooks::handle(
             &runtime,
@@ -155,7 +159,10 @@ async fn composed_default_constrains_commands_and_refuses_unverified_subagents()
             },
         )
         .await;
-        assert!(matches!(decision, HookDecision::Refuse { .. }), "{name}: {decision:?}");
+        let HookDecision::DenyCall { feedback, .. } = decision else {
+            panic!("{name}: {decision:?}");
+        };
+        assert!(feedback.contains("blocked"), "{name}: {feedback}");
     }
 }
 
@@ -351,4 +358,45 @@ fn missing_credential_rules_match_claude_and_codex_login_stays_private() {
         assert_eq!(annotation.delta, equivalent.delta, "{command}");
         assert_eq!(annotation.tags, equivalent.tags, "{command}");
     }
+}
+
+#[test]
+fn explicit_contracts_precede_the_wildcard_for_commands_and_web() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = composed(&dir);
+    let policy = compiled(&config);
+    for (tool, annotator) in [
+        ("host/codex/appa_exec", Some("codex.command-requirements")),
+        ("host/codex/apply_patch", Some("codex.patch-requirements")),
+        ("host/codex/view_image", Some("codex.local-read")),
+        ("host/codex/update_plan", None),
+        ("host/codex/webrun", None),
+        ("mcp/appa/yell", None),
+    ] {
+        let rule = selected(&policy, tool, "printf test");
+        assert_eq!(rule.name().as_str(), tool);
+        assert_eq!(rule.annotator().map(|name| name.as_str()), annotator);
+    }
+    for tool in ["host/codex/image_genimagegen", "host/codex/unknown", "mcp/new/read"] {
+        let rule = selected(&policy, tool, "input");
+        assert_eq!(rule.name().as_str(), "*");
+        assert_eq!(rule.annotator().unwrap().as_str(), "codex.undeclared-tool");
+    }
+    let (_, fallback) = policy
+        .annotators()
+        .find(|(name, _)| name.as_str() == "codex.undeclared-tool")
+        .unwrap();
+    assert_eq!(fallback.builtin, Some(appa_policy::AnnotatorBuiltin::Codex));
+    assert!(fallback.inputs.is_empty(), "the wildcard receives the complete call");
+    let mandate = policy
+        .engine()
+        .registry()
+        .annotator_mandate(&appa_engine::names::AnnotatorName::new("codex.undeclared-tool"))
+        .unwrap();
+    assert_eq!(mandate.marks().map(|mark| mark.as_str()).collect::<Vec<_>>(), ["hitl"]);
+    assert_eq!(
+        mandate.effects().count(),
+        0,
+        "unknown tools cannot declare deployment effects"
+    );
 }
