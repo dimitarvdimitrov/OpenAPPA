@@ -531,6 +531,13 @@ pub fn codex_remove() -> Result<(), InitError> {
 /// Start Codex with the installed profile. The hook trust review remains a
 /// Codex action; this launcher never bypasses it.
 pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
+    let probe_options = match probe_options(&arguments) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!("appa codex: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
     let (hooks, _, receipt) = match profile_paths() {
         Ok(paths) => paths,
         Err(error) => {
@@ -589,13 +596,6 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let probe_options = match probe_options(&arguments) {
-        Ok(options) => options,
-        Err(message) => {
-            eprintln!("appa codex: {message}");
-            return ExitCode::FAILURE;
-        }
-    };
     if let Err(message) = sandbox_probe(&binary, endpoint.url(), &probe_options) {
         eprintln!("appa codex: {message}");
         return ExitCode::FAILURE;
@@ -610,6 +610,12 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
             "features.hooks=true",
             "-c",
             "features.multi_agent=false",
+            "-c",
+            "approval_policy=\"on-request\"",
+            "-c",
+            "approvals_reviewer=\"user\"",
+            "-c",
+            "mcp_servers.appa.tools.execute_remedy_plan.approval_mode=\"approve\"",
         ])
         .args(arguments)
         .env("APPA_GATE", "1")
@@ -630,6 +636,26 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
     let mut index = 0;
     while index < arguments.len() {
         let option = arguments[index].to_string_lossy();
+        if option == "--" {
+            break;
+        }
+        if matches!(option.as_ref(), "-a" | "--ask-for-approval") {
+            let Some(value) = arguments.get(index + 1) else {
+                return Err("a Codex option is missing its value");
+            };
+            if value != "on-request" {
+                return Err(APPROVAL_ERROR);
+            }
+            index += 2;
+            continue;
+        }
+        if let Some(value) = option
+            .strip_prefix("--ask-for-approval=")
+            .or_else(|| option.strip_prefix("-a").filter(|value| !value.is_empty()))
+            && value.strip_prefix('=').unwrap_or(value) != "on-request"
+        {
+            return Err(APPROVAL_ERROR);
+        }
         if matches!(
             option.as_ref(),
             "--dangerously-bypass-approvals-and-sandbox" | "--dangerously-bypass-hook-trust"
@@ -649,6 +675,9 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
                 return Err("a Codex option is missing its value");
             };
             let value_text = value.to_string_lossy();
+            if matches!(option.as_ref(), "-c" | "--config") {
+                check_approval_override(&value_text)?;
+            }
             if (option == "--disable" && matches!(value_text.as_ref(), "hooks" | "network_proxy"))
                 || (option == "--enable" && value_text == "multi_agent")
                 || (matches!(option.as_ref(), "-c" | "--config") && forbidden_config_override(&value_text))
@@ -659,13 +688,24 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
             index += 2;
             continue;
         }
-        if matches!(option.as_ref(), "--disable=hooks" | "--disable=network_proxy")
-            || option == "--enable=multi_agent"
-            || option.strip_prefix("--config=").is_some_and(forbidden_config_override)
+        if let Some(value) = option
+            .strip_prefix("--config=")
+            .or_else(|| option.strip_prefix("-c").filter(|value| !value.is_empty()))
+        {
+            let value = value.strip_prefix('=').unwrap_or(value);
+            check_approval_override(value)?;
+            if forbidden_config_override(value) {
+                return Err("a Codex option disables hooks or replaces the protected permission profile");
+            }
+            options.extend([OsString::from("-c"), OsString::from(value)]);
+            index += 1;
+            continue;
+        }
+        if matches!(option.as_ref(), "--disable=hooks" | "--disable=network_proxy") || option == "--enable=multi_agent"
         {
             return Err("a Codex option disables hooks or replaces the protected permission profile");
         }
-        if ["--cd=", "--profile=", "--config=", "--enable=", "--disable="]
+        if ["--cd=", "--profile=", "--enable=", "--disable="]
             .iter()
             .any(|prefix| option.starts_with(prefix))
         {
@@ -674,6 +714,52 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
         index += 1;
     }
     Ok(options)
+}
+
+const APPROVAL_ERROR: &str = "APPA requires approval_policy=on-request and approvals_reviewer=user for human review. Remove the conflicting approval option.";
+const REMEDY_APPROVAL_ERROR: &str = "APPA requires execute_remedy_plan approval_mode=approve so remedies reach its policy checks. Remove the conflicting MCP approval option.";
+
+/// Parse parent tables and quoted keys too, so an inline table cannot replace a protected setting.
+fn check_approval_override(value: &str) -> Result<(), &'static str> {
+    let Some((key, setting)) = value.split_once('=') else {
+        return Ok(());
+    };
+    let Ok(keys) = toml_edit::Key::parse(key.trim()) else {
+        return Ok(());
+    };
+    let keys = keys.iter().map(toml_edit::Key::get).collect::<Vec<_>>();
+    // Codex accepts unquoted string values when TOML value parsing fails.
+    let document = value.parse::<toml::Table>().or_else(|_| {
+        format!("{} = {}", key.trim(), serde_json::to_string(setting.trim()).unwrap()).parse::<toml::Table>()
+    });
+    let Ok(document) = document else {
+        return Ok(()); // Codex reports invalid config syntax.
+    };
+    for (path, expected, error) in [
+        (&["approval_policy"][..], "on-request", APPROVAL_ERROR),
+        (&["approvals_reviewer"][..], "user", APPROVAL_ERROR),
+        (
+            &["mcp_servers", "appa", "tools", "execute_remedy_plan", "approval_mode"][..],
+            "approve",
+            REMEDY_APPROVAL_ERROR,
+        ),
+    ] {
+        if !path.starts_with(&keys) && !keys.starts_with(path) {
+            continue;
+        }
+        let mut value = document.get(path[0]);
+        for part in &path[1..] {
+            value = match value {
+                Some(toml::Value::Table(table)) => table.get(*part),
+                Some(_) => return Err(error),
+                None => None,
+            };
+        }
+        if value.and_then(toml::Value::as_str) != Some(expected) {
+            return Err(error);
+        }
+    }
+    Ok(())
 }
 
 fn forbidden_config_override(value: &str) -> bool {
@@ -898,6 +984,40 @@ mod tests {
             vec!["--disable", "code_mode_host"],
             vec!["--disable=code_mode_host"],
             vec!["--config=features.code_mode_host=false"],
+        ] {
+            let arguments = arguments.into_iter().map(OsString::from).collect::<Vec<_>>();
+            assert!(probe_options(&arguments).is_ok(), "{arguments:?}");
+        }
+    }
+
+    #[test]
+    fn launcher_rejects_conflicting_approval_options() {
+        for arguments in [
+            vec!["-a", "never"],
+            vec!["-anever"],
+            vec!["--ask-for-approval=never"],
+            vec!["--ask-for-approval", "untrusted"],
+            vec!["-c", "approval_policy='never'"],
+            vec!["-capproval_policy=never"],
+            vec!["--config=\"approval_policy\" = 'never'"],
+            vec!["-c", "approval_policy.granular.mcp_elicitations=false"],
+            vec!["-c", "approvals_reviewer=auto_review"],
+            vec!["-c", "mcp_servers.appa.tools.execute_remedy_plan.approval_mode=prompt"],
+            vec!["--config=mcp_servers.appa.tools={execute_remedy_plan={approval_mode='auto'}}"],
+            vec!["--config=mcp_servers.appa={url='http://localhost/mcp'}"],
+        ] {
+            let arguments = arguments.into_iter().map(OsString::from).collect::<Vec<_>>();
+            let error = probe_options(&arguments).unwrap_err();
+            assert!(error.contains("approval"), "{arguments:?}: {error}");
+        }
+        for arguments in [
+            vec!["-a", "on-request"],
+            vec!["--ask-for-approval=on-request"],
+            vec!["-c", "approval_policy=on-request"],
+            vec!["-c", "approvals_reviewer='user'"],
+            vec!["--config=mcp_servers.appa.tools.execute_remedy_plan.approval_mode='approve'"],
+            vec!["-c", "mcp_servers.other.tools.write.approval_mode='prompt'"],
+            vec!["--", "--ask-for-approval=never"],
         ] {
             let arguments = arguments.into_iter().map(OsString::from).collect::<Vec<_>>();
             assert!(probe_options(&arguments).is_ok(), "{arguments:?}");

@@ -30,7 +30,7 @@ impl Fixture {
         .unwrap();
         fs::write(
             codex.join("config.toml"),
-            "model = 'test'\n[mcp_servers.other]\nurl = 'http://127.0.0.1:9999/mcp'\n",
+            "model = 'test'\napproval_policy = 'never'\napprovals_reviewer = 'auto_review'\n[mcp_servers.other]\nurl = 'http://127.0.0.1:9999/mcp'\n",
         )
         .unwrap();
         fs::write(claude.join("settings.json"), "{\"theme\":\"dark\"}\n").unwrap();
@@ -189,6 +189,12 @@ fn launcher_inherits_host_mode_after_the_sandbox_check() {
             .env("PATH", &path);
         command
     };
+    let host_config_path = fixture.profile().join("codex-home/config.toml");
+    let original_config = fs::read(&host_config_path).unwrap();
+    let incompatible = launch().args(["--", "--ask-for-approval", "never"]).output().unwrap();
+    assert!(!incompatible.status.success());
+    assert!(String::from_utf8_lossy(&incompatible.stderr).contains("APPA requires approval_policy=on-request"));
+    assert!(!calls.exists(), "a conflicting option must fail before Codex starts");
     let strict = launch().env("APPA_DENY_SANDBOX", "1").output().unwrap();
     assert!(!strict.status.success());
     assert!(String::from_utf8_lossy(&strict.stderr).contains("command sandbox cannot reach"));
@@ -217,11 +223,19 @@ fn launcher_inherits_host_mode_after_the_sandbox_check() {
     assert!(!launch.contains("features.apps=false"), "{launch}");
     assert!(!launch.contains("features.browser_use=false"), "{launch}");
     assert!(launch.contains("features.multi_agent=false"), "{launch}");
+    assert!(launch.contains("approval_policy=\"on-request\""), "{launch}");
+    assert!(launch.contains("approvals_reviewer=\"user\""), "{launch}");
+    assert!(
+        launch.contains("mcp_servers.appa.tools.execute_remedy_plan.approval_mode=\"approve\""),
+        "{launch}"
+    );
+    assert!(!launch.contains("default_tools_approval_mode"), "{launch}");
     assert!(
         launch.contains("--search --enable apps --enable=browser_use"),
         "{launch}"
     );
     assert!(calls.next().is_none());
+    assert_eq!(fs::read(host_config_path).unwrap(), original_config);
 }
 
 #[test]
@@ -285,6 +299,176 @@ fn hook_decision(fixture: &Fixture, session: &str) -> String {
             .unwrap_or_else(|| panic!("missing permission decision: {answer}"))
             .to_owned()
     }
+}
+
+fn remedy_hook(fixture: &Fixture, event: serde_json::Value) -> serde_json::Value {
+    let mut child = fixture
+        .process(&["hook", "--adapter", "codex", "--deployment-url", &fixture.endpoint])
+        .env("APPA_GATE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(event.to_string().as_bytes())
+        .unwrap();
+    serde_json::from_str(&success(child.wait_with_output().unwrap())).unwrap()
+}
+
+#[derive(Clone)]
+struct RemedyReviewer {
+    answer: rmcp::model::ElicitationAction,
+    reviews: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl rmcp::ClientHandler for RemedyReviewer {
+    fn get_info(&self) -> rmcp::model::ClientConfig {
+        let mut info = rmcp::model::ClientConfig::default();
+        info.capabilities.elicitation = Some(Default::default());
+        info
+    }
+
+    async fn create_elicitation(
+        &self,
+        request: rmcp::model::ElicitRequestParams,
+        _: rmcp::service::RequestContext<rmcp::service::RoleClient>,
+    ) -> Result<rmcp::model::ElicitResult, rmcp::ErrorData> {
+        if let rmcp::model::ElicitRequestParams::FormElicitationParams { message, .. } = request {
+            self.reviews.lock().unwrap().push(message);
+        }
+        Ok(rmcp::model::ElicitResult::new(self.answer.clone()))
+    }
+}
+
+async fn execute_codex_remedy(fixture: &Fixture, offer: &str, reviewer: RemedyReviewer) -> String {
+    use rmcp::service::{ClientLifecycleMode, ClientServiceExt};
+
+    appa_runtime::tls::install_crypto_provider();
+    let arguments = serde_json::json!({"offer_id": offer});
+    assert_eq!(
+        remedy_hook(
+            fixture,
+            serde_json::json!({
+                "hook_event_name": "PreToolUse", "session_id": "remedy-test",
+                "tool_name": "mcp__appa__execute_remedy_plan", "tool_use_id": "remedy",
+                "cwd": fixture.profile(), "tool_input": arguments,
+            })
+        ),
+        serde_json::json!({}),
+    );
+    let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(format!("{}/mcp", fixture.endpoint));
+    let client = reviewer
+        .serve_with_lifecycle(
+            transport,
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![rmcp::model::ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .unwrap();
+    let mut params = rmcp::model::CallToolRequestParams::default();
+    params.name = "execute_remedy_plan".into();
+    params.arguments = arguments.as_object().cloned();
+    let result = client.call_tool(params).await.unwrap();
+    assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+    client.cancel().await.unwrap();
+    format!("{:?}", result.content)
+}
+
+#[tokio::test]
+async fn codex_remedies_sanitize_autonomously_and_require_human_approval() {
+    let fixture = Fixture::new();
+    fs::write(
+        &fixture.config,
+        r#"
+[policy]
+version = 2
+[[policy.tool]]
+name = "host/codex/read_private"
+delta = { audience = ["self"] }
+[[policy.tool]]
+name = "host/codex/publish"
+requires = { attention = ["signoff"] }
+[[policy.sanitizer]]
+name = "redact-secrets"
+on = ["tool_output"]
+[policy.sanitizer.permits]
+audience = { from = ["self"], to = ["public"] }
+[policy.deployment]
+confined_results = ["host/codex/read_private"]
+[[policy.authority]]
+name = "operator"
+hint = "The person at the keyboard."
+[policy.authority.permits]
+attention = ["signoff"]
+[externals]
+timeout_ms = 2000
+review_timeout_ms = 5000
+max_body_bytes = 65536
+[externals.sanitizers.redact-secrets]
+builtin = "redact-secrets"
+[externals.authorities.operator]
+builtin = "hitl"
+"#,
+    )
+    .unwrap();
+    success(fixture.command(&["activate-codex", "--config", fixture.config.to_str().unwrap()]));
+    let event = |tool: &str| {
+        serde_json::json!({
+            "hook_event_name": "PreToolUse", "session_id": "remedy-test",
+            "tool_name": tool, "tool_use_id": tool, "cwd": fixture.profile(), "tool_input": {},
+        })
+    };
+    let blocked = remedy_hook(&fixture, event("read_private"));
+    let feedback = blocked["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap();
+    assert!(feedback.contains("redact-secrets"), "{feedback}");
+    let offer = common::last_offer(feedback);
+    let reviewer = RemedyReviewer {
+        answer: rmcp::model::ElicitationAction::Accept,
+        reviews: Default::default(),
+    };
+    let authorized = execute_codex_remedy(&fixture, &offer.0, reviewer.clone()).await;
+    assert!(authorized.contains("Authorized"), "{authorized}");
+    assert!(
+        reviewer.reviews.lock().unwrap().is_empty(),
+        "sanitization must not request approval"
+    );
+    assert_eq!(remedy_hook(&fixture, event("read_private")), serde_json::json!({}));
+    let mut result = event("read_private");
+    result["hook_event_name"] = serde_json::json!("PostToolUse");
+    result["tool_response"] = serde_json::json!({"token": "fixture-secret", "status": "ready"});
+    let delivered = remedy_hook(&fixture, result).to_string();
+    assert!(delivered.contains("redacted-secret"), "{delivered}");
+    assert!(delivered.contains("ready"), "{delivered}");
+    assert!(!delivered.contains("fixture-secret"), "{delivered}");
+
+    let blocked = remedy_hook(&fixture, event("publish"));
+    let feedback = blocked["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap();
+    let offer = common::last_offer(feedback);
+    let canceled = RemedyReviewer {
+        answer: rmcp::model::ElicitationAction::Cancel,
+        ..reviewer.clone()
+    };
+    let answer = execute_codex_remedy(&fixture, &offer.0, canceled).await;
+    assert!(!answer.contains("Authorized"), "dismissal must not authorize: {answer}");
+    let authorized = execute_codex_remedy(&fixture, &offer.0, reviewer.clone()).await;
+    assert!(authorized.contains("Authorized"), "{authorized}");
+    let reviews = reviewer.reviews.lock().unwrap();
+    assert_eq!(reviews.len(), 2);
+    assert!(
+        reviews
+            .iter()
+            .all(|review| review.contains("publish") && review.contains("signoff"))
+    );
+    assert_eq!(remedy_hook(&fixture, event("publish")), serde_json::json!({}));
 }
 
 #[test]
