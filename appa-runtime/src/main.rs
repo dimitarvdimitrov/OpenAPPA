@@ -850,7 +850,9 @@ async fn serve_inner(args: Args, telemetry_enabled: bool) -> ExitCode {
         .route("/codex/job/{handle}/running", get(codex_running))
         .route(
             "/codex/job/{handle}/report",
-            post(codex_report).layer(axum::extract::DefaultBodyLimit::max(3 * 1024 * 1024)),
+            post(codex_report).layer(axum::extract::DefaultBodyLimit::max(
+                crate::codex::jobs::MAX_REPORT_BYTES,
+            )),
         )
         .route("/codex/job/outer", post(codex_outer))
         .route(

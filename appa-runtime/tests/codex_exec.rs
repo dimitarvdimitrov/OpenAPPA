@@ -203,7 +203,7 @@ fn codex_hook_prepares_and_settles_a_runtime_owned_command() {
 
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("policy.toml");
-    std::fs::write(&config, "[policy]\nversion = 2\n[[policy.tool]]\nname = \"host/codex/appa_exec\"\n[externals]\ntimeout_ms = 5000\nmax_body_bytes = 65536\n").unwrap();
+    std::fs::write(&config, "[policy]\nversion = 2\n[[policy.tool]]\nname = \"host/codex/appa_exec\"\n[externals]\ntimeout_ms = 5000\nmax_body_bytes = 105000000\n").unwrap();
     let mut runtime = Command::new(env!("CARGO_BIN_EXE_appa"))
         .args(["runtime", "--adapter", "codex", "--config"])
         .arg(&config)
@@ -240,7 +240,10 @@ fn codex_hook_prepares_and_settles_a_runtime_owned_command() {
         }
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
     };
-    let original = "printf original-result";
+    let original = concat!(
+        "dd if=/dev/zero bs=1048576 count=50 2>/dev/null | tr '\\000' x; ",
+        "dd if=/dev/zero bs=1048576 count=50 2>/dev/null | tr '\\000' x >&2"
+    );
     let pre = hook(serde_json::json!({
         "hook_event_name":"PreToolUse", "session_id":"s1", "tool_name":"Bash",
         "tool_use_id":"c1", "cwd":dir.path(), "tool_input":{"command":original}
@@ -257,7 +260,11 @@ fn codex_hook_prepares_and_settles_a_runtime_owned_command() {
         .output()
         .unwrap();
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
-    assert_eq!(result.stdout, b"original-result");
+    // Exactly 100 MiB across both streams must survive capture and admission.
+    assert_eq!(result.stdout.len(), 50 * 1024 * 1024);
+    assert_eq!(result.stderr.len(), 50 * 1024 * 1024);
+    assert!(result.stdout.iter().all(|byte| *byte == b'x'));
+    assert!(result.stderr.iter().all(|byte| *byte == b'x'));
     let pre = hook(serde_json::json!({
         "hook_event_name":"PreToolUse", "session_id":"s1", "tool_name":"Bash",
         "tool_use_id":"c2", "cwd":dir.path(),

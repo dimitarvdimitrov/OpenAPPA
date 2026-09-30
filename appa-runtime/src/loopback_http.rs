@@ -136,7 +136,7 @@ pub(crate) fn request(
     body: &[u8],
     deadline: &Deadline,
 ) -> Result<Answer, String> {
-    request_with_route(endpoint, method, path, body, deadline, None)
+    request_with_route(endpoint, method, path, body, deadline, None, MAX_HTTP_BYTES)
 }
 
 /// The Codex execution wrapper runs inside a network sandbox whose HTTP proxy is
@@ -155,7 +155,15 @@ pub(crate) fn request_for_sandboxed_wrapper(
     if proxy.as_ref().is_some_and(|proxy| !proxy.prefix.is_empty()) {
         return Err("the Codex HTTP proxy URL must not have a path".into());
     }
-    request_with_route(endpoint, method, path, body, deadline, proxy.as_ref())
+    request_with_route(
+        endpoint,
+        method,
+        path,
+        body,
+        deadline,
+        proxy.as_ref(),
+        crate::codex::jobs::MAX_REPORT_BYTES,
+    )
 }
 
 fn request_with_route(
@@ -165,8 +173,9 @@ fn request_with_route(
     body: &[u8],
     deadline: &Deadline,
     proxy: Option<&Endpoint>,
+    max_bytes: usize,
 ) -> Result<Answer, String> {
-    if body.len() > MAX_HTTP_BYTES {
+    if body.len() > max_bytes {
         return Err("the runtime request exceeds the HTTP body limit".into());
     }
     endpoint.addresses()?;
@@ -197,7 +206,7 @@ fn request_with_route(
             Ok(0) => break,
             Ok(read) => {
                 answer.extend_from_slice(&chunk[..read]);
-                if answer.len() > MAX_HTTP_BYTES {
+                if answer.len() > max_bytes {
                     return Err("the runtime answer exceeds the HTTP body limit".into());
                 }
                 if declared_answer_len(&answer)?.is_some_and(|length| answer.len() >= length) {
