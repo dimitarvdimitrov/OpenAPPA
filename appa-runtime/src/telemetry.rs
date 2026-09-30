@@ -88,6 +88,7 @@ fn error_class(error: &EventError) -> &'static str {
         EventError::UnknownOffer | EventError::RemedyArguments { .. } => "remedy",
         EventError::NotAChild
         | EventError::SpawnNotTaken
+        | EventError::InvalidLaunchReceipt
         | EventError::SpawnAmbiguous
         | EventError::BindingMismatch => "spawn",
     }

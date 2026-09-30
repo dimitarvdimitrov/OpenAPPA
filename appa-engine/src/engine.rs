@@ -235,7 +235,7 @@ impl Engine {
             EngineEvent::Proposals(batch) => Some(&batch.trajectory),
             EngineEvent::ExecuteOffer(execution) => Some(&execution.trajectory),
             EngineEvent::ChildReturn(report) => Some(&report.child),
-            EngineEvent::Outcome(_) | EngineEvent::BindFork(_) => None,
+            EngineEvent::Outcome(_) | EngineEvent::LaunchOutcome { .. } | EngineEvent::BindFork(_) => None,
         };
         if acting.is_some_and(|trajectory| !view.projection().is_opened(trajectory)) {
             return Err(TransitionError::UnopenedTrajectory);
@@ -243,7 +243,10 @@ impl Engine {
         let act = self.event_evidence(view, &event)?;
         let decision = match event {
             EngineEvent::Proposals(batch) => self.decide_proposals(view, &batch, &act),
-            EngineEvent::Outcome(report) => self.decide_outcome(view, &report, &act),
+            EngineEvent::Outcome(report) => self.decide_outcome(view, &report, &act, None),
+            EngineEvent::LaunchOutcome { report, task_path } => {
+                self.decide_launch_outcome(view, &report, &task_path, &act)
+            }
             EngineEvent::ChildReturn(report) => self.decide_child_return(view, &report, &act),
             EngineEvent::BindFork(binding) => self.decide_binding(view, &binding),
             EngineEvent::ExecuteOffer(execution) => self.decide_offer(view, &execution, &act),
@@ -266,7 +269,7 @@ impl Engine {
                     None => (execution.audience.clone(), AudienceEvidence::default()),
                 }
             }
-            EngineEvent::Outcome(report) => {
+            EngineEvent::Outcome(report) | EngineEvent::LaunchOutcome { report, .. } => {
                 let views = projection.view(report.dispatch.trajectory());
                 match views.dispatch_evidence(&report.dispatch) {
                     Some(pinned) => (report.audience.inheriting(pinned)?, pinned.clone()),
@@ -476,7 +479,10 @@ impl Engine {
         let projection = view.projection();
         projection
             .prepared_forks()
-            .filter(|fork| projection.bound_child(fork).is_none() && projection.is_dispatch_open(fork.dispatch()))
+            .filter(|fork| {
+                projection.bound_child(fork).is_none()
+                    && (projection.is_dispatch_open(fork.dispatch()) || projection.launch_receipt(fork).is_some())
+            })
             .filter(|fork| {
                 let parent = &projection
                     .prepared_fork(fork)
@@ -757,6 +763,7 @@ impl Engine {
         view: &EngineView,
         report: &ToolReport,
         act: &ActEvidence,
+        launch: Option<&str>,
     ) -> Result<EngineDecision, TransitionError> {
         let dispatch = &report.dispatch;
         let views = view.projection().view(dispatch.trajectory());
@@ -922,6 +929,7 @@ impl Engine {
                                     raw_digest,
                                 },
                                 act,
+                                launch,
                             );
                         };
                         return self.stage_candidate(
@@ -944,7 +952,36 @@ impl Engine {
                 }
             }
         };
-        self.admitting_outcome(view, &views, dispatch, &call, admission, act)
+        self.admitting_outcome(view, &views, dispatch, &call, admission, act, launch)
+    }
+
+    fn decide_launch_outcome(
+        &self,
+        view: &EngineView,
+        report: &ToolReport,
+        task_path: &str,
+        act: &ActEvidence,
+    ) -> Result<EngineDecision, TransitionError> {
+        let fork = ForkId::of(&report.dispatch);
+        let projection = view.projection();
+        if !matches!(
+            report.outcome,
+            ToolOutcome::Success {
+                body: OutcomeBody::Unavailable
+            }
+        ) || projection.prepared_fork(&fork).is_none()
+            || task_path.is_empty()
+            || task_path.len() > 256
+            || projection.launch_receipt(&fork).is_some_and(|saved| saved != task_path)
+        {
+            return Err(TransitionError::InvalidLaunchReceipt);
+        }
+        self.decide_outcome(
+            view,
+            report,
+            act,
+            projection.launch_receipt(&fork).is_none().then_some(task_path),
+        )
     }
 
     fn admitting_outcome(
@@ -955,8 +992,9 @@ impl Engine {
         call: &ResolvedCall,
         admission: ResultAdmission,
         act: &ActEvidence,
+        launch: Option<&str>,
     ) -> Result<EngineDecision, TransitionError> {
-        let batch = admit::admit_result(
+        let mut batch = admit::admit_result(
             &self.registry,
             views,
             dispatch,
@@ -972,6 +1010,13 @@ impl Engine {
             AdmitError::MembershipNeeded(needed) => TransitionError::from(needed),
             other => unreachable!("the outcome path admits what the log already proved: {other}"),
         })?;
+        if let Some(task_path) = launch {
+            batch.push(Fact::ForkLaunched {
+                trajectory: dispatch.trajectory().clone(),
+                fork: ForkId::of(dispatch),
+                task_path: task_path.to_owned(),
+            });
+        }
         let admitted = batch.iter().find_map(|fact| match fact {
             Fact::ValueAdmitted { value, .. } => Some(value.body.clone()),
             _ => None,

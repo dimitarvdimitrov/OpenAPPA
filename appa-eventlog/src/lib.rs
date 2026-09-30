@@ -141,6 +141,8 @@ pub struct Log {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostObservation {
+    /// A protected Codex launcher authenticated this root for one runtime invocation.
+    ProtectedCodexRoot { root: TrajectoryId, invocation: String },
     /// Identity evidence from one actor's host: the tools it reports, in that actor's own
     /// scope.
     Inventory {
@@ -187,7 +189,8 @@ impl HostObservation {
     pub fn key(&self) -> Option<&str> {
         match self {
             Self::Vouched { key, .. } | Self::Claimed { key, .. } | Self::Released { key, .. } => Some(key),
-            Self::Inventory { .. }
+            Self::ProtectedCodexRoot { .. }
+            | Self::Inventory { .. }
             | Self::CallBound { .. }
             | Self::PromptSeen { .. }
             | Self::PromptSettled { .. }

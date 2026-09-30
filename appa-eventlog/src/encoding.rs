@@ -137,6 +137,10 @@ mod tests {
             child: Some(TrajectoryId::new("cc:child")),
         };
         vec![
+            HostObservation::ProtectedCodexRoot {
+                root: root(),
+                invocation: "profile-digest".into(),
+            },
             observed(root().as_str(), "demo"),
             HostObservation::CallBound {
                 trajectory: root(),
@@ -178,6 +182,7 @@ mod tests {
     fn stored_batch_bytes_are_frozen() {
         let facts = r#"[{"Boundary":{"trajectory":"cc:root","kind":"VoidReturn"}}]"#;
         let hosts = [
+            r#"{"kind":"protected_codex_root","root":"cc:root","invocation":"profile-digest"}"#,
             r#"{"kind":"inventory","actor":"cc:root","adapter":"kagent","inventory":{"tools":[{"name":"read","tool":"mcp:demo/read"}],"sources":[]}}"#,
             r#"{"kind":"call_bound","trajectory":"cc:root","call_id":"toolu_1","dispatch":{"trajectory":"cc:root","digest":"abababababababababababababababababababababababababababababababab","occurrence":7}}"#,
             r#"{"kind":"vouched","actor":{"root":"cc:root","child":"cc:child"},"key":"offer:one","ruling":"approve"}"#,

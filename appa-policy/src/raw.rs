@@ -29,6 +29,7 @@ pub(crate) struct RawDeployment {
     pub(crate) starting_label: Option<RawStartingLabel>,
     pub(crate) binding: Option<BindingMode>,
     pub(crate) context_control: Option<bool>,
+    pub(crate) auto_return_as_spoken: Option<bool>,
     pub(crate) dispatch: Option<ExecutorClass>,
     #[serde(default)]
     pub(crate) assumed_tools: Vec<String>,

@@ -93,11 +93,88 @@ name = "host/codex/resume_agent"
 requires = { attention = ["blocked"] }
 delta = {}
 
+[[policy.tool]]
+name = "host/codex/wait_agent"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/collaborationresume_agent"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/collaborationsend_input"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/collaborationclose_agent"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/collaborationsend_message"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/followup_task"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/collaborationfollowup_task"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/interrupt_agent"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/collaborationinterrupt_agent"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/list_agents"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/collaborationlist_agents"
+requires = { attention = ["blocked"] }
+delta = {}
+
 # The command wrapper closes child stdin and does not forward later input.
 [[policy.tool]]
 name = "host/codex/appa_stdin"
 requires = { attention = ["blocked"] }
 delta = {}
+
+# Codex reports a launch task path before its child UUID. The runtime records
+# that receipt and binds the UUID from SubagentStart. A protected persistent
+# launcher records profile eligibility for the root and proves each hook invocation.
+# The child return crosses through SubagentStop. A wait admits only the exact
+# completion status that the live probe verified.
+# The automatic as-spoken contract uses the parent's current label as its floor.
+[[policy.tool]]
+name = "host/codex/collaborationspawn_agent"
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/collaborationwait_agent"
+delta = {}
+
+# Raw child text remains in persistent rollouts and external event streams.
+# The profile denies sandboxed commands access to those rollouts. Resume, input,
+# close, interrupt, follow-up, listing, and peer messages stay disabled.
+
+[policy.deployment]
+context_control = true
+auto_return_as_spoken = true
 
 # Like Claude Code, classify other hooked tools through the complete call.
 # Classification still requires policy admission. No answer means refusal.

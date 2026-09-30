@@ -495,6 +495,13 @@ pub enum Fact {
         snapshot: ForkSnapshot,
         return_policy: ReturnPolicy,
     },
+    /// The host confirmed that an authorized spawn ran. Its task path is a receipt,
+    /// not the identity of the child that a later start binds.
+    ForkLaunched {
+        trajectory: TrajectoryId,
+        fork: crate::value::ForkId,
+        task_path: String,
+    },
     ForkOpened {
         trajectory: TrajectoryId,
         fork: crate::value::ForkId,
@@ -561,6 +568,7 @@ impl Fact {
             | Fact::CandidateConsumed { trajectory, .. }
             | Fact::BasisAdvanced { trajectory, .. }
             | Fact::ForkPrepared { trajectory, .. }
+            | Fact::ForkLaunched { trajectory, .. }
             | Fact::ForkOpened { trajectory, .. }
             | Fact::Boundary { trajectory, .. } => trajectory,
         }

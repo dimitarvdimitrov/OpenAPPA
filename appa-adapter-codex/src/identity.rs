@@ -37,7 +37,7 @@ fn canonical(raw: &str) -> Result<CanonicalTool, ParseRefusal> {
 pub(crate) fn identify_tool(raw: &str) -> Result<IdentifiedTool, ParseRefusal> {
     Ok(IdentifiedTool {
         canonical: canonical(raw)?,
-        spawn: raw == "spawn_agent",
+        spawn: matches!(raw, "spawn_agent" | "collaborationspawn_agent"),
     })
 }
 
@@ -67,6 +67,7 @@ mod tests {
             "image_genimagegen",
             "apply_patch",
             "spawn_agent",
+            "collaborationspawn_agent",
             "mcp__github__read_issue",
             CONTROL,
         ] {
@@ -79,6 +80,7 @@ mod tests {
             None
         );
         assert!(identify_tool("spawn_agent").unwrap().spawn);
+        assert!(identify_tool("collaborationspawn_agent").unwrap().spawn);
         let bash = CanonicalTool::parse("host/codex/appa_exec").unwrap();
         assert_eq!(identify_tool("Bash").unwrap().canonical, bash);
         assert_eq!(spell(&bash).as_deref(), Some("Bash"));

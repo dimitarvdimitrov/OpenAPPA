@@ -9,12 +9,12 @@ use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
-use appa_runtime_api::AdapterName;
+use appa_runtime_api::{AdapterName, HookEvent, TrajectoryId};
 use axum::extract::{ConnectInfo, Json, Path as AxumPath, Request, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -262,6 +262,81 @@ struct AppState {
     executable: Option<ExecutableAtStart>,
     codex_jobs: Arc<crate::codex::jobs::Jobs>,
     codex_url: String,
+    codex_protection: Option<Arc<ProtectedCodex>>,
+}
+
+struct ProtectedCodex {
+    proof: String,
+    invocation: String,
+    expected_root: Option<TrajectoryId>,
+    root: Mutex<Option<TrajectoryId>>,
+}
+
+impl ProtectedCodex {
+    fn from_environment() -> Result<Option<Self>, String> {
+        let Some(path) = std::env::var_os("APPA_CODEX_PROOF_FILE") else {
+            return Ok(None);
+        };
+        let proof = fs::read_to_string(path).map_err(|error| format!("Codex proof is unavailable: {error}"))?;
+        let proof = proof.trim();
+        if proof.len() != 64 || !proof.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("Codex proof has an invalid shape".into());
+        }
+        let digest = Sha256::digest(proof.as_bytes());
+        Ok(Some(Self {
+            proof: proof.to_owned(),
+            invocation: digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+            expected_root: std::env::var("APPA_CODEX_EXPECTED_ROOT").ok().map(TrajectoryId),
+            root: Mutex::new(None),
+        }))
+    }
+
+    fn permits(&self, headers: &HeaderMap, event: &HookEvent) -> bool {
+        let Some(supplied) = headers.get("x-appa-codex-proof").and_then(|value| value.to_str().ok()) else {
+            return false;
+        };
+        if supplied.len() != self.proof.len()
+            || supplied
+                .bytes()
+                .zip(self.proof.bytes())
+                .fold(0u8, |diff, (left, right)| diff | (left ^ right))
+                != 0
+        {
+            return false;
+        }
+        let root = event_root(event);
+        let Ok(mut bound) = self.root.lock() else { return false };
+        if bound.is_none() {
+            if !matches!(event, HookEvent::SessionStart { .. })
+                || self.expected_root.as_ref().is_some_and(|expected| expected != root)
+            {
+                return false;
+            }
+            *bound = Some(root.clone());
+        }
+        bound.as_ref() == Some(root)
+    }
+}
+
+fn event_root(event: &HookEvent) -> &TrajectoryId {
+    match event {
+        HookEvent::SessionStart { root, .. }
+        | HookEvent::ChildStart { root, .. }
+        | HookEvent::ChildEnd { root, .. } => root,
+        HookEvent::Prompt { actor, .. }
+        | HookEvent::TurnEnd { actor }
+        | HookEvent::ToolCall { actor, .. }
+        | HookEvent::SpawnResume { actor, .. }
+        | HookEvent::ToolResult { actor, .. }
+        | HookEvent::SpawnResult { actor, .. } => &actor.root,
+    }
+}
+
+fn authenticated(state: &AppState, headers: &HeaderMap, event: &HookEvent) -> bool {
+    state
+        .codex_protection
+        .as_ref()
+        .is_none_or(|protection| protection.permits(headers, event))
 }
 
 #[derive(serde::Deserialize)]
@@ -272,6 +347,7 @@ struct CodexPrepare {
 
 async fn codex_prepare(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<CodexPrepare>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     if state.adapter.name != AdapterName::Codex {
@@ -302,6 +378,12 @@ async fn codex_prepare(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "not a Codex command call"})),
+        );
+    }
+    if !authenticated(&state, &headers, &event) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Codex hook proof refused"})),
         );
     }
     let specification = match crate::codex::context::prepare(&mut event, &request.shell) {
@@ -395,7 +477,24 @@ async fn codex_report(
         .map_err(|_| StatusCode::CONFLICT)
 }
 
-async fn codex_outer(State(state): State<AppState>, body: axum::body::Bytes) -> (StatusCode, Json<serde_json::Value>) {
+async fn codex_outer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(protection) = &state.codex_protection {
+        let event = appa_runtime_api::WireEvent::read(&body)
+            .and_then(|wire| wire.into_event(&state.adapter))
+            .ok()
+            .flatten()
+            .map(|accepted| accepted.event);
+        if !event.as_ref().is_some_and(|event| protection.permits(&headers, event)) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "Codex hook proof refused"})),
+            );
+        }
+    }
     let owned = state.adapter.name == AdapterName::Codex
         && appa_runtime_api::WireEvent::read(&body)
             .and_then(|wire| wire.into_event(&state.adapter))
@@ -430,13 +529,52 @@ async fn codex_outer(State(state): State<AppState>, body: axum::body::Bytes) -> 
 
 async fn hook(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
-    if state.adapter.name == AdapterName::Codex
-        && let Ok(Some(accepted)) =
-            appa_runtime_api::WireEvent::read(&body).and_then(|wire| wire.into_event(&state.adapter))
+    let decoded = appa_runtime_api::WireEvent::read(&body)
+        .and_then(|wire| wire.into_event(&state.adapter))
+        .ok()
+        .flatten()
+        .map(|accepted| accepted.event);
+    if state.codex_protection.is_some()
+        && !decoded
+            .as_ref()
+            .is_some_and(|event| authenticated(&state, &headers, event))
     {
-        let actor = match &accepted.event {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Codex hook proof refused"})),
+        );
+    }
+    if let (Some(protection), Some(event)) = (&state.codex_protection, &decoded) {
+        let child_boundary = matches!(event, HookEvent::ChildStart { .. } | HookEvent::ChildEnd { .. });
+        let collaboration = match event {
+            HookEvent::ToolCall { call, .. }
+            | HookEvent::ToolResult { call, .. }
+            | HookEvent::SpawnResult { call, .. } => {
+                matches!(
+                    call.tool.as_str(),
+                    "host/codex/collaborationspawn_agent" | "host/codex/collaborationwait_agent"
+                )
+            }
+            _ => false,
+        };
+        if (child_boundary || collaboration)
+            && !state
+                .runtime
+                .protected_codex_root(event_root(event), &protection.invocation)
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "Codex root has no active protected profile record"})),
+            );
+        }
+    }
+    if state.adapter.name == AdapterName::Codex
+        && let Some(event) = &decoded
+    {
+        let actor = match event {
             appa_runtime_api::HookEvent::TurnEnd { actor } | appa_runtime_api::HookEvent::Prompt { actor, .. } => {
                 Some(actor)
             }
@@ -449,6 +587,15 @@ async fn hook(
         }
     }
     let (status, body) = hooks::answer(&state.runtime, &state.adapter, &body).await;
+    if status == 200
+        && let (Some(protection), Some(HookEvent::SessionStart { root, .. })) = (&state.codex_protection, &decoded)
+        && let Err(error) = state.runtime.record_protected_codex_root(root, &protection.invocation)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": error.to_string()})),
+        );
+    }
     let status = axum::http::StatusCode::from_u16(status).expect("hook answers carry valid status codes");
     (status, axum::Json(body))
 }
@@ -833,6 +980,17 @@ async fn serve_inner(args: Args, telemetry_enabled: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let codex_protection = if args.adapter == AdapterName::Codex {
+        match ProtectedCodex::from_environment() {
+            Ok(protection) => protection.map(Arc::new),
+            Err(error) => {
+                eprintln!("appa runtime: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     let state = AppState {
         runtime: Arc::clone(&runtime),
         adapter,
@@ -843,15 +1001,23 @@ async fn serve_inner(args: Args, telemetry_enabled: bool) -> ExitCode {
         executable: ExecutableAtStart::of_this_process(),
         codex_jobs,
         codex_url: format!("http://{listen}"),
+        codex_protection,
     };
-    let management = axum::Router::new()
-        .route("/binary-fingerprint", get(binary_fingerprint))
-        .route("/policy-key", get(policy_key))
-        .route("/file-tools", get(file_tools))
-        .route("/status", get(status))
-        .route("/report", post(report))
-        .route("/reload", post(reload))
-        .route_layer(axum::middleware::from_fn(loopback_management_only));
+    let management = if state.codex_protection.is_some() {
+        // A sandboxed Codex command can reach loopback. The report route can
+        // disclose a recent trajectory, so protected invocations serve no
+        // management routes on that listener.
+        axum::Router::new()
+    } else {
+        axum::Router::new()
+            .route("/binary-fingerprint", get(binary_fingerprint))
+            .route("/policy-key", get(policy_key))
+            .route("/file-tools", get(file_tools))
+            .route("/status", get(status))
+            .route("/report", post(report))
+            .route("/reload", post(reload))
+            .route_layer(axum::middleware::from_fn(loopback_management_only))
+    };
     let app = axum::Router::new()
         .route("/health", get(health))
         .route("/adapter", get(adapter_identity))
@@ -954,6 +1120,60 @@ fn management_peer_is_allowed(peer: SocketAddr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protected_codex_proof_binds_one_root_and_rejects_replay() {
+        let proof = "a".repeat(64);
+        let protected = ProtectedCodex {
+            proof: proof.clone(),
+            invocation: "digest".into(),
+            expected_root: Some(TrajectoryId("codex:original".into())),
+            root: Mutex::new(None),
+        };
+        let mut headers = HeaderMap::new();
+        let start = |id: &str| HookEvent::SessionStart {
+            root: TrajectoryId(id.into()),
+            principal: None,
+        };
+        assert!(!protected.permits(&headers, &start("codex:original")));
+        headers.insert("x-appa-codex-proof", "b".repeat(64).parse().unwrap());
+        assert!(!protected.permits(&headers, &start("codex:original")));
+        headers.insert("x-appa-codex-proof", proof.parse().unwrap());
+        assert!(!protected.permits(&headers, &start("codex:sibling")));
+        assert!(protected.permits(&headers, &start("codex:original")));
+        assert!(!protected.permits(&headers, &start("codex:sibling")));
+    }
+
+    #[tokio::test]
+    async fn protected_root_record_rotates_across_invocations() {
+        let directory = tempfile::tempdir().unwrap();
+        let policy = directory.path().join("appa.toml");
+        fs::write(
+            &policy,
+            "[policy]\nversion = 2\n[externals]\ntimeout_ms = 5000\nmax_body_bytes = 65536\n",
+        )
+        .unwrap();
+        let config = Config::load(&policy).unwrap();
+        let runtime = Runtime::open(config, directory.path().join("appa.db"), None).unwrap();
+        let root = TrajectoryId("codex:session".into());
+        assert_eq!(
+            hooks::handle(
+                &runtime,
+                HookEvent::SessionStart {
+                    root: root.clone(),
+                    principal: None
+                }
+            )
+            .await,
+            appa_runtime_api::HookDecision::Ack,
+        );
+        assert!(!runtime.protected_codex_root(&root, "first"));
+        runtime.record_protected_codex_root(&root, "first").unwrap();
+        assert!(runtime.protected_codex_root(&root, "first"));
+        runtime.record_protected_codex_root(&root, "second").unwrap();
+        assert!(!runtime.protected_codex_root(&root, "first"));
+        assert!(runtime.protected_codex_root(&root, "second"));
+    }
 
     #[test]
     fn a_missing_config_is_created_without_replacing_an_existing_file() {

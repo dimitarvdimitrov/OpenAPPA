@@ -14,6 +14,10 @@ use crate::names::SurfaceName;
 use crate::registry::{LoadError, PlannerCap, Registry, RegistryConfig, TrustChain, check_rank, check_routable};
 use crate::value::ToolName;
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// How a tool executes relative to the engine's release: a component consumes the
 /// release before execution (`Enforced`), execution is assumed faithful (`Assumed`, an open
 /// vector), or the provider runs the tool inside the inference call (`ProviderRun` — an ingestion
@@ -90,6 +94,7 @@ impl std::fmt::Display for ProviderRunConstruct {
 pub struct ProfileDeclaration {
     pub starting_label: Label,
     pub context_control: bool,
+    pub auto_return_as_spoken: bool,
     pub dispatch: ExecutorClass,
     pub executor_exceptions: BTreeMap<ToolName, ExecutorClass>,
     pub confined_results: BTreeSet<ToolName>,
@@ -106,6 +111,8 @@ pub struct ProfileDeclaration {
 pub struct DeploymentProfile {
     starting_label: Label,
     context_control: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    auto_return_as_spoken: bool,
     dispatch: ExecutorClass,
     executor_exceptions: BTreeMap<ToolName, ExecutorClass>,
     confined_results: BTreeSet<ToolName>,
@@ -121,6 +128,7 @@ impl ProfileDeclaration {
         ProfileDeclaration {
             starting_label: neutral_starting_label(chain),
             context_control: false,
+            auto_return_as_spoken: false,
             dispatch: ExecutorClass::Assumed,
             executor_exceptions: BTreeMap::new(),
             confined_results: BTreeSet::new(),
@@ -139,6 +147,7 @@ impl DeploymentProfile {
         let ProfileDeclaration {
             starting_label,
             context_control,
+            auto_return_as_spoken,
             dispatch,
             mut executor_exceptions,
             confined_results,
@@ -159,6 +168,7 @@ impl DeploymentProfile {
         Ok(DeploymentProfile {
             starting_label,
             context_control,
+            auto_return_as_spoken,
             dispatch,
             executor_exceptions,
             confined_results,
@@ -173,6 +183,10 @@ impl DeploymentProfile {
 
     pub fn context_control(&self) -> bool {
         self.context_control
+    }
+
+    pub fn auto_return_as_spoken(&self) -> bool {
+        self.auto_return_as_spoken
     }
 
     pub fn binding(&self) -> BindingMode {
@@ -212,6 +226,8 @@ impl<'de> Deserialize<'de> for DeploymentProfile {
         struct Wire {
             starting_label: Label,
             context_control: bool,
+            #[serde(default)]
+            auto_return_as_spoken: bool,
             dispatch: ExecutorClass,
             executor_exceptions: BTreeMap<ToolName, ExecutorClass>,
             confined_results: BTreeSet<ToolName>,
@@ -222,6 +238,7 @@ impl<'de> Deserialize<'de> for DeploymentProfile {
         DeploymentProfile::declare(ProfileDeclaration {
             starting_label: wire.starting_label,
             context_control: wire.context_control,
+            auto_return_as_spoken: wire.auto_return_as_spoken,
             dispatch: wire.dispatch,
             executor_exceptions: wire.executor_exceptions,
             confined_results: wire.confined_results,
@@ -618,6 +635,7 @@ pub(crate) fn covering_declaration(config: &RegistryConfig) -> ProfileDeclaratio
     ProfileDeclaration {
         starting_label: neutral_starting_label(&config.trust_chain),
         context_control: true,
+        auto_return_as_spoken: false,
         dispatch: ExecutorClass::Enforced,
         executor_exceptions: BTreeMap::new(),
         confined_results: config

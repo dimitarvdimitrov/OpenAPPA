@@ -146,6 +146,9 @@ enum Command {
         /// The harness whose hook format arrives on stdin.
         #[arg(long, default_value_t = appa_runtime_api::AdapterName::ClaudeCode)]
         adapter: appa_runtime_api::AdapterName,
+        /// The fixed Codex hook entry that this command serves.
+        #[arg(long)]
+        expected_event: Option<String>,
         #[command(flatten)]
         target: appa_runtime::runtime_url::RuntimeUrl,
 
@@ -259,6 +262,7 @@ fn main() -> ExitCode {
         Command::Hook {
             adapter,
             target,
+            expected_event,
             turn_end,
             ensure_runtime,
             config,
@@ -274,7 +278,20 @@ fn main() -> ExitCode {
                 },
                 false => None,
             };
-            appa_runtime::hook_client::run(&target.resolve_for(adapter), adapter, turn_end, deployment.as_ref())
+            let run = || {
+                appa_runtime::hook_client::run(
+                    &target.resolve_for(adapter),
+                    adapter,
+                    turn_end,
+                    deployment.as_ref(),
+                    expected_event.as_deref(),
+                )
+            };
+            match expected_event.as_deref() {
+                Some(expected) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(run))
+                    .unwrap_or_else(|_| appa_runtime::hook_client::codex_panic_response(expected)),
+                None => run(),
+            }
         }
         Command::Statusline { target } => appa_runtime::statusline::run(&target.resolve()),
         Command::SessionContext { subagent } => appa_runtime::session_context::run(if subagent {

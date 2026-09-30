@@ -53,7 +53,8 @@ impl HostState {
                 // Evidence, not standing: read where it is needed, never folded. A prompt
                 // mark is the latest record about it, which [`prompted`] finds by walking
                 // the records back from the end.
-                HostObservation::Inventory { .. }
+                HostObservation::ProtectedCodexRoot { .. }
+                | HostObservation::Inventory { .. }
                 | HostObservation::CallBound { .. }
                 | HostObservation::PromptSeen { .. }
                 | HostObservation::PromptSettled { .. } => {}

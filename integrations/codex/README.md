@@ -75,3 +75,34 @@ A deliberately daemonized child can escape that group and continue after the wra
 Codex CLI 0.159.0 also left such a child alive after its parent exited.
 Do not use this proxy to contain daemonized commands. The policy must deny them until process-tree containment exists.
 The wrapper withholds output from an escaped child that retains its pipes. It cannot reverse that child's side effects.
+
+## Subagents
+
+The policy permits `collaborationspawn_agent` and `collaborationwait_agent` in protected persistent sessions and ephemeral sessions. Each spawn must set `fork_turns` to `"none"`.
+
+The spawn hook authorizes the call before execution. The spawn result records a launch receipt. `SubagentStart` binds the child UUID. `SubagentStop` checks the final message against the return contract. The wait hook admits only a completion status after that check.
+
+A protected persistent session uses a separate Codex home. Its profile denies sandboxed commands access to that home and the source Codex home. The launcher fixes the hooks, starts a dedicated APPA runtime, and records the protected root in the existing event log. Each hook proves the active invocation. A direct resume with the stored hook configuration stops when its runtime is absent.
+
+The protected runtime does not serve its loopback management routes. Those routes can expose a recent trajectory to a local client.
+
+The protection covers the parent model context in launcher sessions on the tested macOS Codex release. Raw child text remains in Codex rollouts and external `--json` streams. The profile does not cover other processes or external clients. Codex must start each configured synchronous hook and apply its exit-zero JSON response. A missed hook or a discarded response is outside this guarantee.
+
+Other collaboration routes remain disabled. These include `resume_agent`, `send_input`, `close_agent`, interrupt, follow-up, list, and peer messages.
+
+### Procedure
+
+1. Build `appa` with `cargo build -p appa`.
+2. Run `python3 integrations/codex/run_persistent.py --cwd .` for an interactive session.
+3. Run `python3 integrations/codex/run_persistent.py --cwd . --resume SESSION_UUID` to resume that session.
+4. Run `python3 integrations/codex/run_persistent.py --cwd . --exec "Spawn one child with fork_turns none. Wait for its return."` for a saved noninteractive session.
+
+The launcher uses the saved Codex login from `$CODEX_HOME/auth.json`. It stores protected sessions under `$CODEX_HOME/appa-protected`. A direct Codex invocation without the launcher is outside the protected workflow. The plugin installer also registers ordinary Codex sessions. Those sessions remain outside this protected workflow.
+
+### Probes
+
+1. Run `python3 integrations/codex/persistent_subagent_probe.py` after the build.
+2. Run `python3 integrations/codex/appa_subagent_probe.py` for the ephemeral workflow.
+3. Run `python3 integrations/codex/proxy_probe.py` for the command proxy.
+
+The persistent probe uses a disposable home. It checks spawn, the launch receipt, child identity, the checked return, wait, denied profile reads, resume, and direct-resume denial. The live probe passed on macOS with Codex CLI 0.159.2. A different Codex release requires a new live check.

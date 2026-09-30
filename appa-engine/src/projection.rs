@@ -147,6 +147,7 @@ pub struct Projection {
     subject_dispatches: BTreeMap<crate::basis::SubjectKey, DispatchId>,
     observations: BTreeMap<DispatchId, ObservedResult>,
     prepared: BTreeMap<ForkId, PreparedFork>,
+    launched: BTreeMap<ForkId, String>,
     bound: BTreeMap<ForkId, TrajectoryId>,
     fork_of: BTreeMap<TrajectoryId, ForkId>,
     child_returns: Vec<ReturnedChild>,
@@ -223,6 +224,7 @@ impl Projection {
             subject_dispatches: BTreeMap::new(),
             observations: BTreeMap::new(),
             prepared: BTreeMap::new(),
+            launched: BTreeMap::new(),
             bound: BTreeMap::new(),
             fork_of: BTreeMap::new(),
             child_returns: Vec::new(),
@@ -278,6 +280,7 @@ impl Projection {
             subject_dispatches,
             observations,
             prepared,
+            launched,
             bound,
             fork_of,
             child_returns,
@@ -578,6 +581,9 @@ impl Projection {
                         },
                     );
                 }
+                Fact::ForkLaunched { fork, task_path, .. } => {
+                    launched.insert(fork.clone(), task_path.clone());
+                }
                 Fact::ForkOpened { trajectory, fork } => {
                     if let Some(preparation) = prepared.get(fork) {
                         bound.insert(fork.clone(), trajectory.clone());
@@ -759,6 +765,10 @@ impl Projection {
     /// belongs to the log, and the child it will open is not a trajectory of it yet.
     pub(crate) fn prepared_fork(&self, fork: &ForkId) -> Option<&PreparedFork> {
         self.prepared.get(fork)
+    }
+
+    pub(crate) fn launch_receipt(&self, fork: &ForkId) -> Option<&str> {
+        self.launched.get(fork).map(String::as_str)
     }
 
     pub(crate) fn bound_child(&self, fork: &ForkId) -> Option<&TrajectoryId> {
