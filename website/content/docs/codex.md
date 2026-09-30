@@ -26,13 +26,14 @@ It preserves unrelated hooks, MCP servers, and permission profiles.
 The default policy includes the Codex battery and uses the saved Codex login for annotations.
 
 Codex skips hooks that lack trust. A changed hook needs another review in `/hooks`.
-The protected launcher refuses session starts on the tested Codex CLI 0.159.2 release.
-`code_mode_host=false` removes shell access. If the feature is enabled, Codex can run the original command after a failed pre-use hook.
+The launcher enables `code_mode_host=true` for shell access.
+The hook supervisor returns a Codex block if the APPA worker fails or exceeds its deadline.
+Codex can still run an original command if it skips the hook or the supervisor itself fails.
 
-See the [host compatibility gate](https://github.com/dimitarvdimitrov/OpenAPPA/blob/mitko/codex-install-policy/integrations/codex/HOST_MODE_GATE.md) for probe results.
+See the [host-mode probe](https://github.com/dimitarvdimitrov/OpenAPPA/blob/mitko/codex-install-policy/integrations/codex/HOST_MODE_GATE.md) for probe results.
 
 The command below checks the installed profile and sandbox HTTP path.
-It then reports the compatibility refusal:
+It then starts Codex:
 
 ```sh
 appa codex --
@@ -59,7 +60,7 @@ The HTTP check refuses profiles that block the loopback rule.
 The launcher includes managed configuration in that check.
 
 The pre-use hook must replace the command before the wrapper can protect it.
-If a hook fails or lacks trust, Codex can run the original command.
+If Codex skips the hook or the supervisor fails, Codex can run the original command.
 MCP error results can bypass the post-use hook.
 The wrapper does not forward later stdin.
 Native Windows commands and terminal jobs lack a validated protected path.

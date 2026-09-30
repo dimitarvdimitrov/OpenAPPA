@@ -32,6 +32,14 @@ enum Command {
         url: String,
         handle: String,
     },
+    /// Supervise one Codex hook and return a host denial if its worker fails.
+    #[command(hide = true)]
+    CodexHook {
+        #[arg(long)]
+        event: String,
+        #[arg(long, env = "APPA_RUNTIME_URL")]
+        deployment_url: String,
+    },
     /// Run headless Claude with runtime-owned file tools and native tools removed.
     ClaudeFiles(appa_runtime::claude_files::Args),
     /// Internal trajectory-bound MCP server launched by claude-files.
@@ -232,6 +240,7 @@ fn main() -> ExitCode {
         Command::Codex { args } => appa_runtime::init::launch_codex(args),
         Command::CodexProbe { url } => appa_runtime::codex_probe::run(&url),
         Command::CodexExec { url, handle } => appa_runtime::codex::exec::run(&url, &handle),
+        Command::CodexHook { event, deployment_url } => appa_runtime::codex_hook_guard::run(&event, &deployment_url),
         Command::BuildInfo => appa_runtime::installation::native::build_info(),
         Command::ActivateClaude { config } => match appa_runtime::init::activate_claude_code(&config) {
             Ok(_) => ExitCode::SUCCESS,

@@ -123,7 +123,7 @@ fn direct_codex_activation_reinstall_and_removal_preserve_both_profiles() {
 }
 
 #[test]
-fn launcher_refuses_a_session_after_the_sandbox_check() {
+fn launcher_enables_host_mode_after_the_sandbox_check() {
     use std::os::unix::fs::PermissionsExt;
 
     let fixture = Fixture::new();
@@ -142,7 +142,7 @@ fn launcher_refuses_a_session_after_the_sandbox_check() {
     fs::write(
         &fake_codex,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\nif [ \"$APPA_DENY_SANDBOX\" = 1 ]; then exit 1; fi\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$APPA_DENY_SANDBOX\" = 1 ]; then exit 1; fi\nexit 0\n",
             calls.display()
         ),
     )
@@ -168,7 +168,38 @@ fn launcher_refuses_a_session_after_the_sandbox_check() {
     assert!(String::from_utf8_lossy(&strict.stderr).contains("command sandbox cannot reach"));
 
     let output = launch().output().unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("protected launch refused"));
-    assert_eq!(fs::read_to_string(calls).unwrap(), "sandbox\nsandbox\n");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let calls = fs::read_to_string(calls).unwrap();
+    let mut calls = calls.lines();
+    assert!(calls.next().unwrap().starts_with("sandbox "));
+    assert!(calls.next().unwrap().starts_with("sandbox "));
+    let launch = calls.next().unwrap();
+    assert!(launch.contains("features.code_mode_host=true"), "{launch}");
+    assert!(calls.next().is_none());
+}
+
+#[test]
+fn codex_hook_guard_denies_a_worker_failure() {
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_appa"))
+        .args([
+            "codex-hook",
+            "--event",
+            "PreToolUse",
+            "--deployment-url",
+            "http://127.0.0.1:1",
+        ])
+        .env("APPA_GATE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(br#"{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Bash","tool_input":{"command":"printf secret"}}"#).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(answer["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("printf secret"));
 }

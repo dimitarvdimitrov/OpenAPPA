@@ -1,8 +1,8 @@
 # Codex
 
-The Codex host compatibility gate currently refuses protected session starts.
+Start a Codex session with `appa codex --` after you install the plugin.
+Review and trust the installed hooks in `/hooks`.
 Do not describe a regular Codex session as protected by this policy.
-Use this reference after the gate passes and `appa codex --` starts a session.
 
 ## Inspect
 
@@ -56,7 +56,9 @@ The command wrapper needs loopback HTTP access from Codex's command sandbox.
 The installed `appa` profile extends `:workspace` and allows `127.0.0.1` through Codex's proxy.
 That host rule covers all ports on the allowed host.
 The sandbox HTTP check refuses profiles that block the rule.
-The launcher refuses session starts until the host compatibility gate passes.
+The launcher enables the shell and checks runtime HTTP access before it starts Codex.
+The hook supervisor denies a tool call if its APPA worker fails or exceeds its deadline.
+Codex can skip an untrusted hook or run an original command if the supervisor fails.
 Native Windows commands need a separate sandbox and console probe.
 
 Do not disable the filesystem sandbox, allow public hosts, or bypass hook trust to make the HTTP check pass.

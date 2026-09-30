@@ -53,7 +53,7 @@ def main() -> int:
             }
             hook_env = dict(os.environ, APPA_GATE="1", SHELL="/bin/sh")
             hook_env.pop("APPA_RUNTIME_URL", None)
-            hook_args = [str(appa), "hook", "--adapter", "codex", "--deployment-url", url]
+            hook_args = [str(appa), "codex-hook", "--event", "PreToolUse", "--deployment-url", url]
             pre = subprocess.run(hook_args, input=json.dumps(event), text=True, capture_output=True,
                                  env=hook_env, timeout=15)
             if pre.returncode != 0:
@@ -71,7 +71,8 @@ def main() -> int:
             stdout, stderr = sandbox.communicate(timeout=20)
             event.update({"hook_event_name": "PostToolUse", "tool_input": {"command": wrapper},
                           "tool_response": stdout.decode(errors="replace")})
-            post = subprocess.run(hook_args, input=json.dumps(event), text=True, capture_output=True,
+            post_args = [str(appa), "codex-hook", "--event", "PostToolUse", "--deployment-url", url]
+            post = subprocess.run(post_args, input=json.dumps(event), text=True, capture_output=True,
                                   env=hook_env, timeout=15)
             forged = subprocess.run(
                 ["codex", "sandbox", "-P", "probe", "-C", str(project), str(appa),

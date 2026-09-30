@@ -114,40 +114,18 @@ fn powershell_literal(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
-fn hook_command(
-    binary: &Path,
-    url: &str,
-    config: &Path,
-    data: &Path,
-    start: bool,
-    windows: bool,
-) -> Result<String, InitError> {
+fn hook_command(binary: &Path, event: &str, url: &str, windows: bool) -> Result<String, InitError> {
     let path = binary
         .to_str()
         .ok_or_else(|| profile_error(binary, "path must be UTF-8 for Codex hooks"))?;
-    let config = config
-        .to_str()
-        .ok_or_else(|| profile_error(config, "path must be UTF-8 for Codex hooks"))?;
-    let data = data
-        .to_str()
-        .ok_or_else(|| profile_error(data, "path must be UTF-8 for Codex hooks"))?;
     let literal = if windows { powershell_literal } else { shell_literal };
-    let mut parts = vec![
-        "hook".to_owned(),
-        "--adapter".into(),
-        "codex".into(),
+    let parts = [
+        "codex-hook".to_owned(),
+        "--event".into(),
+        event.into(),
         "--deployment-url".into(),
         literal(url),
     ];
-    if start {
-        parts.extend([
-            "--ensure-runtime".into(),
-            "--config".into(),
-            literal(config),
-            "--data-dir".into(),
-            literal(data),
-        ]);
-    }
     let head = if windows {
         format!("& {}", literal(path))
     } else {
@@ -156,21 +134,21 @@ fn hook_command(
     Ok(format!("{head} {}", parts.join(" ")))
 }
 
-fn hook_groups(binary: &Path, url: &str, config: &Path, data: &Path) -> Result<BTreeMap<String, Value>, InitError> {
+fn hook_groups(binary: &Path, url: &str) -> Result<BTreeMap<String, Value>, InitError> {
     let mut groups = BTreeMap::new();
     let events = [
-        ("SessionStart", None, true, 150),
-        ("UserPromptSubmit", None, false, 130),
-        ("PreToolUse", Some("*"), false, 130),
-        ("PostToolUse", Some("*"), false, 130),
-        ("SubagentStart", None, false, 130),
-        ("SubagentStop", None, false, 130),
-        ("Stop", None, false, 3),
-        ("SessionEnd", None, false, 3),
+        ("SessionStart", None, 150),
+        ("UserPromptSubmit", None, 130),
+        ("PreToolUse", Some("*"), 130),
+        ("PostToolUse", Some("*"), 130),
+        ("SubagentStart", None, 130),
+        ("SubagentStop", None, 130),
+        ("Stop", None, 3),
+        ("SessionEnd", None, 3),
     ];
-    for (event, matcher, start, timeout) in events {
-        let unix = hook_command(binary, url, config, data, start, false)?;
-        let windows = hook_command(binary, url, config, data, start, true)?;
+    for (event, matcher, timeout) in events {
+        let unix = hook_command(binary, event, url, false)?;
+        let windows = hook_command(binary, event, url, true)?;
         let mut group =
             json!({"hooks": [{"type":"command", "command":unix, "commandWindows":windows, "timeout":timeout}]});
         if let Some(matcher) = matcher {
@@ -343,7 +321,7 @@ pub fn activate_codex(config: &Path) -> Result<String, InitError> {
     let _lock = super::lock_claude_profile(hooks_path.parent().expect("hooks parent"))?;
     let previous = read_receipt(&receipt_path)?;
     let wanted = Receipt {
-        hooks: hook_groups(&binary, endpoint.url(), &config, &data)?,
+        hooks: hook_groups(&binary, endpoint.url())?,
         mcp_url: format!("{}/mcp", endpoint.url()),
         config: config.clone(),
     };
@@ -549,16 +527,6 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
         eprintln!("appa codex: {message}");
         return ExitCode::FAILURE;
     }
-    let information_only = matches!(
-        arguments.as_slice(),
-        [option] if matches!(option.to_str(), Some("--help" | "-h" | "--version" | "-V"))
-    );
-    if !information_only {
-        eprintln!(
-            "appa codex: protected launch refused. The shell requires code_mode_host. Codex can run an original command when its pre-tool hook fails or lacks trust."
-        );
-        return ExitCode::FAILURE;
-    }
     let status = Command::new("codex")
         .args([
             "-c",
@@ -570,7 +538,7 @@ pub fn launch_codex(arguments: Vec<OsString>) -> ExitCode {
             "-c",
             "features.browser_use=false",
             "-c",
-            "features.code_mode_host=false",
+            "features.code_mode_host=true",
             "-c",
             "features.multi_agent=false",
         ])
@@ -612,12 +580,8 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
                 return Err("a Codex option is missing its value");
             };
             let value_text = value.to_string_lossy();
-            if (option == "--disable" && matches!(value_text.as_ref(), "hooks" | "network_proxy"))
-                || (option == "--enable"
-                    && matches!(
-                        value_text.as_ref(),
-                        "apps" | "browser_use" | "code_mode_host" | "multi_agent"
-                    ))
+            if (option == "--disable" && matches!(value_text.as_ref(), "hooks" | "network_proxy" | "code_mode_host"))
+                || (option == "--enable" && matches!(value_text.as_ref(), "apps" | "browser_use" | "multi_agent"))
                 || (matches!(option.as_ref(), "-c" | "--config") && forbidden_config_override(&value_text))
             {
                 return Err("a Codex option disables hooks or replaces the protected permission profile");
@@ -626,10 +590,12 @@ fn probe_options(arguments: &[OsString]) -> Result<Vec<OsString>, &'static str> 
             index += 2;
             continue;
         }
-        if matches!(option.as_ref(), "--disable=hooks" | "--disable=network_proxy")
-            || ["apps", "browser_use", "code_mode_host", "multi_agent"]
-                .iter()
-                .any(|feature| option == format!("--enable={feature}"))
+        if matches!(
+            option.as_ref(),
+            "--disable=hooks" | "--disable=network_proxy" | "--disable=code_mode_host"
+        ) || ["apps", "browser_use", "multi_agent"]
+            .iter()
+            .any(|feature| option == format!("--enable={feature}"))
             || option.strip_prefix("--config=").is_some_and(forbidden_config_override)
         {
             return Err("a Codex option disables hooks or replaces the protected permission profile");
@@ -653,10 +619,8 @@ fn forbidden_config_override(value: &str) -> bool {
     let setting = setting.trim();
     key == "default_permissions"
         || (matches!(key, "features.hooks" | "features.network_proxy") && setting == "false")
-        || (matches!(
-            key,
-            "features.apps" | "features.browser_use" | "features.code_mode_host" | "features.multi_agent"
-        ) && setting == "true")
+        || (matches!(key, "features.apps" | "features.browser_use" | "features.multi_agent") && setting == "true")
+        || (key == "features.code_mode_host" && setting == "false")
 }
 
 fn sandbox_probe(binary: &Path, url: &str, options: &[OsString]) -> Result<(), String> {
@@ -702,13 +666,7 @@ mod tests {
         fs::write(&hooks_path, serde_json::to_vec(&foreign).unwrap()).unwrap();
         fs::write(&config_path, "model = 'test'\n").unwrap();
         let first = Receipt {
-            hooks: hook_groups(
-                Path::new("/tmp/appa"),
-                "http://127.0.0.1:8766",
-                Path::new("/tmp/appa.toml"),
-                root.path(),
-            )
-            .unwrap(),
+            hooks: hook_groups(Path::new("/tmp/appa"), "http://127.0.0.1:8766").unwrap(),
             mcp_url: "http://127.0.0.1:8766/mcp".into(),
             config: root.path().join("appa.toml"),
         };
@@ -735,13 +693,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("hooks.json");
         let receipt = Receipt {
-            hooks: hook_groups(
-                Path::new("/tmp/appa"),
-                "http://127.0.0.1:8766",
-                Path::new("/tmp/appa.toml"),
-                root.path(),
-            )
-            .unwrap(),
+            hooks: hook_groups(Path::new("/tmp/appa"), "http://127.0.0.1:8766").unwrap(),
             mcp_url: "http://127.0.0.1:8766/mcp".into(),
             config: root.path().join("appa.toml"),
         };
@@ -780,13 +732,7 @@ mod tests {
         std::os::unix::fs::symlink(&hooks_target, &hooks).unwrap();
         std::os::unix::fs::symlink(&config_target, &config).unwrap();
         let receipt = Receipt {
-            hooks: hook_groups(
-                Path::new("/tmp/appa"),
-                "http://127.0.0.1:8766",
-                Path::new("/tmp/appa.toml"),
-                root.path(),
-            )
-            .unwrap(),
+            hooks: hook_groups(Path::new("/tmp/appa"), "http://127.0.0.1:8766").unwrap(),
             mcp_url: "http://127.0.0.1:8766/mcp".into(),
             config: root.path().join("appa.toml"),
         };
@@ -808,6 +754,8 @@ mod tests {
     fn launcher_rejects_overrides_of_protected_controls() {
         for arguments in [
             vec!["--disable", "hooks"],
+            vec!["--disable", "code_mode_host"],
+            vec!["--config=features.code_mode_host=false"],
             vec!["--enable", "browser_use"],
             vec!["-c", "default_permissions = ':workspace'"],
             vec!["--config=features.network_proxy=false"],

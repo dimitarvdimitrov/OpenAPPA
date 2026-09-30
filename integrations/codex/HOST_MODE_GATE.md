@@ -1,4 +1,4 @@
-# Codex host compatibility gate
+# Codex host-mode compatibility
 
 The protected launch gate fails on Codex CLI 0.159.2 on macOS 26.6.2 arm64.
 The tested binary SHA-256 is `16593cc2f422d5f398a8e40f550ebbaf1245392528957be342c295920a300704`.
@@ -43,11 +43,21 @@ A crashed, malformed, timed-out, or untrusted pre-use hook did not block the syn
 Codex ran the original command in each of those four cases.
 The [official hook documentation](https://learn.chatgpt.com/docs/hooks) describes non-managed hook trust and tool coverage.
 
-This behavior fails the protected launch gate.
-`appa codex --` retains `code_mode_host=false` and refuses session starts after its sandbox check.
-It permits a single `--help` or version option for CLI information.
-The gate prevents an unsupported protected-session claim.
-No manually trusted protected session test ran because this gate failed.
+`appa codex --` enables `code_mode_host=true` after its sandbox check.
+Each installed hook runs through `appa codex-hook` before it calls the APPA hook worker.
+The supervisor gives the worker less time than Codex gives the hook.
+It returns a valid Codex denial if the worker exits with an error, times out, or returns invalid JSON.
+For Bash, it accepts only an explicit denial or a nonempty command wrapper.
+The supervisor cannot protect a hook that Codex skips because it lacks trust.
+It cannot answer if its own process fails to start or stops before it writes a response.
+These paths still let Codex run an original command.
+No manually trusted protected session test ran in this probe.
+
+A disposable live Codex session also tested the installed supervisor command.
+The probe used a temporary hook and bypassed trust for that temporary hook only.
+The APPA worker could not reach its test endpoint, so the supervisor returned a `PreToolUse` denial.
+Codex blocked the shell request, and no marker file appeared.
+This probe does not establish trust for the installed hooks.
 
 ## Sandbox HTTP result
 
