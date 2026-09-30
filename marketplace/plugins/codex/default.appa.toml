@@ -1,6 +1,6 @@
 # Default policy for a protected Codex session. The Codex battery supplies
 # command selectors, result confinement, and the sanitizer. Rules match in
-# order; an unknown hooked tool has no declaration and is refused.
+# order within each tool. Explicit contracts precede the wildcard classifier.
 
 [policy]
 version = 2
@@ -55,9 +55,62 @@ name = "mcp/appa/yell"
 requires = { audience = { contains = ["public"] } }
 delta = {}
 
-# This deployment deliberately does not declare spawn_agent, wait, or peer
-# messaging. Their parent-visible result and child lifecycle still need a
-# live Codex gate before a return contract can be asserted.
+# A web query or URL leaves the session. External authors supply the result.
+[[policy.tool]]
+name = "host/codex/webrun"
+requires = { audience = { contains = ["public"] } }
+delta = { trust = "suspicious" }
+
+# Subagent returns and peer messages need a verified lifecycle contract.
+# The reserved blocked mark cannot receive human authorization.
+[[policy.tool]]
+name = "host/codex/spawn_agent"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/wait"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/send_input"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/send_message"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/close_agent"
+requires = { attention = ["blocked"] }
+delta = {}
+
+[[policy.tool]]
+name = "host/codex/resume_agent"
+requires = { attention = ["blocked"] }
+delta = {}
+
+# The command wrapper closes child stdin and does not forward later input.
+[[policy.tool]]
+name = "host/codex/appa_stdin"
+requires = { attention = ["blocked"] }
+delta = {}
+
+# Like Claude Code, classify other hooked tools through the complete call.
+# Classification still requires policy admission. No answer means refusal.
+[[policy.annotator]]
+name = "codex.undeclared-tool"
+builtin = "codex"
+ranks = ["suspicious", "trusted"]
+marks = ["hitl"]
+effects = []
+
+[[policy.tool]]
+name = "*"
+annotator = "codex.undeclared-tool"
 
 [[policy.authority]]
 name = "hitl"

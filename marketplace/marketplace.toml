@@ -16,7 +16,7 @@ digest = "sha256:94b63c1992b5c645005269283d96a4fcd530dbfa2a9737c3481276d98dc8ad3
 
 [packages.battery.codex]
 path = "batteries/codex"
-digest = "sha256:19e72b8c44a7e476d7508d02df07c620984ccef1b80e64a2ec5bdda640853ef6"
+digest = "sha256:3235d21dda880551d3941f98a692b03a8fce864a49a522b4ea26f0c28a323713"
 
 [packages.battery.databricks]
 path = "batteries/databricks"
@@ -88,7 +88,7 @@ digest = "sha256:08f3b00886c78ee32f2b8f53292bb8840cf73ea34adc14af27b2a0d6441c120
 
 [packages.plugin.codex]
 path = "plugins/codex"
-digest = "sha256:3bdffc4cb7eeb78ae2da756b531dd18dfe963c80b416df3c270a4c08c8bfd25d"
+digest = "sha256:182557873b3d4a26e7f35a56973fba1e2631a4fd477831baff9815a6af033299"
 
 [packages.plugin.kagent]
 path = "plugins/kagent"

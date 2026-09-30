@@ -27,8 +27,9 @@ Put required input in the original command. Do not rely on interactive prompts.
 
 Selectors match the command text, not every command's resolved file path or
 runtime behavior. Shell expansions, aliases, and scripts rely on the
-classifier. The Codex default leaves unknown hooked tools undeclared. It keeps
-subagents disabled until a checked return path passes a real host test.
+classifier. The Codex default supplies a wildcard classifier for other hooked tools.
+Explicit contracts take precedence. A missing or invalid annotation causes refusal.
+Subagent and peer-message routes remain blocked until a live test verifies their lifecycle contracts.
 
 For a custom root policy, include the battery with:
 
@@ -40,7 +41,8 @@ version = 2
 ```
 
 The root can place stricter command rules before the battery. The default root
-also declares `apply_patch` and local utility operations. Its patch classifier
+also declares `apply_patch`, local utility operations, and `webrun`. The web contract
+requires the `public` audience and labels results `suspicious`. Its patch classifier
 requires fresh `hitl` attention for hook and MCP configuration edits, including
 mixed patches. This requirement depends on the classifier's annotation.
 Shared MCP batteries continue to use canonical `mcp/<server>/<tool>` names.
