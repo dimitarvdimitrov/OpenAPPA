@@ -95,7 +95,10 @@ pub(crate) fn parse(body: &[u8]) -> Result<Option<HookEvent>, ParseRefusal> {
         },
         "PreToolUse" => {
             let call = input.call()?;
-            let spawn = call.tool == "spawn_agent";
+            let spawn = matches!(call.tool.as_str(), "spawn_agent" | "collaborationspawn_agent");
+            if spawn && !fresh_spawn_context(&call) {
+                return Err(malformed("Codex subagents require fork_turns none"));
+            }
             HookEvent::ToolCall {
                 actor: input.actor(),
                 call,
@@ -106,6 +109,9 @@ pub(crate) fn parse(body: &[u8]) -> Result<Option<HookEvent>, ParseRefusal> {
         }
         "PostToolUse" => {
             let call = input.call()?;
+            if call.tool == "collaborationwait_agent" && !safe_wait_response(input.tool_response.as_ref()) {
+                return Err(malformed("Codex wait returned an unchecked child result"));
+            }
             let outcome = match input.tool_response.as_ref() {
                 None => ToolOutcome::Indeterminate,
                 Some(response) if call.tool.starts_with("mcp__") && mcp_error(response) => ToolOutcome::Indeterminate,
@@ -116,14 +122,23 @@ pub(crate) fn parse(body: &[u8]) -> Result<Option<HookEvent>, ParseRefusal> {
                     body: OutcomeBody::Available(response.to_string()),
                 },
             };
-            if call.tool == "spawn_agent" {
-                let child = input
-                    .tool_response
-                    .as_ref()
-                    .and_then(|response| response.get("agent_id").or_else(|| response.get("agentId")))
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|id| !id.is_empty())
-                    .map(|id| TrajectoryId(format!("codex:{}:{id}", input.session_id)));
+            if matches!(call.tool.as_str(), "spawn_agent" | "collaborationspawn_agent") {
+                if !fresh_spawn_context(&call) {
+                    return Err(malformed("Codex subagents require fork_turns none"));
+                }
+                // The collaboration result supplies a launch receipt, not a verified
+                // identity. Only SubagentStart can bind its child to this parent.
+                let child = (call.tool != "collaborationspawn_agent")
+                    .then(|| {
+                        input
+                            .tool_response
+                            .as_ref()
+                            .and_then(|response| response.get("agent_id").or_else(|| response.get("agentId")))
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|id| !id.is_empty())
+                            .map(|id| TrajectoryId(format!("codex:{}:{id}", input.session_id)))
+                    })
+                    .flatten();
                 HookEvent::SpawnResult {
                     actor: input.actor(),
                     call,
@@ -153,13 +168,43 @@ pub(crate) fn parse(body: &[u8]) -> Result<Option<HookEvent>, ParseRefusal> {
             child: input
                 .child()
                 .ok_or_else(|| malformed("subagent stop has no agent_id"))?,
-            value: input.last_assistant_message.clone(),
+            value: Some(
+                input
+                    .last_assistant_message
+                    .clone()
+                    .ok_or_else(|| malformed("subagent stop has no last_assistant_message"))?,
+            ),
         },
         "Stop" | "SessionEnd" | "Interrupt" | "PreCompact" => HookEvent::TurnEnd { actor: input.actor() },
         "PostCompact" | "PermissionRequest" => return Ok(None),
         _ => return Err(malformed("unsupported Codex hook event")),
     };
     Ok(Some(event))
+}
+
+fn fresh_spawn_context(call: &ProposedCall) -> bool {
+    serde_json::from_str::<serde_json::Value>(call.arguments.get())
+        .ok()
+        .and_then(|arguments| {
+            arguments
+                .get("fork_turns")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some("none")
+}
+
+fn safe_wait_response(response: Option<&serde_json::Value>) -> bool {
+    let Some(serde_json::Value::String(response)) = response else {
+        return false;
+    };
+    let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(response) else {
+        return false;
+    };
+    fields.len() == 2
+        && fields.get("message").and_then(serde_json::Value::as_str) == Some("Wait completed.")
+        && fields.get("timed_out").and_then(serde_json::Value::as_bool) == Some(false)
 }
 
 fn mcp_error(response: &serde_json::Value) -> bool {
@@ -245,5 +290,137 @@ mod tests {
         ] {
             assert!(parse(body).is_err());
         }
+    }
+
+    #[test]
+    fn observed_collaboration_spawn_has_no_verified_child_id_in_its_result() {
+        let before = br#"{"hook_event_name":"PreToolUse","session_id":"s1","transcript_path":null,"tool_name":"collaborationspawn_agent","tool_use_id":"c1","tool_input":{"task_name":"child","message":"report","fork_turns":"none"}}"#;
+        let Some(HookEvent::ToolCall { spawn: true, .. }) = parse(before).unwrap() else {
+            panic!("the observed Codex tool must retain its spawn identity")
+        };
+        let after = br#"{"hook_event_name":"PostToolUse","session_id":"s1","transcript_path":null,"tool_name":"collaborationspawn_agent","tool_use_id":"c1","tool_input":{"task_name":"child","message":"report","fork_turns":"none"},"tool_response":"{\"task_name\":\"/root/child\"}"}"#;
+        let Some(HookEvent::SpawnResult { child: None, .. }) = parse(after).unwrap() else {
+            panic!("the task path is not a verified child ID")
+        };
+        let start = br#"{"hook_event_name":"SubagentStart","session_id":"s1","agent_id":"child-uuid"}"#;
+        let Some(HookEvent::ChildStart {
+            child,
+            spawn: SpawnRef::InFlight,
+            ..
+        }) = parse(start).unwrap()
+        else {
+            panic!("the child start binds only through the pending spawn")
+        };
+        assert_eq!(child.0, "codex:s1:child-uuid");
+    }
+
+    #[test]
+    fn collaboration_spawn_result_cannot_supply_a_child_identity() {
+        for response in [
+            serde_json::json!({"agent_id":"forged", "text":"raw child text"}),
+            serde_json::json!({"task_name":"/root/child", "agentId":"forged"}),
+        ] {
+            let body = serde_json::json!({
+                "hook_event_name":"PostToolUse", "session_id":"s1", "transcript_path":null,
+                "tool_name":"collaborationspawn_agent", "tool_use_id":"c1",
+                "tool_input":{"task_name":"child","message":"report","fork_turns":"none"},
+                "tool_response":response,
+            });
+            let Some(HookEvent::SpawnResult { child: None, .. }) = parse(body.to_string().as_bytes()).unwrap() else {
+                panic!("a collaboration result cannot bind a child: {body}")
+            };
+        }
+    }
+
+    #[test]
+    fn persistent_session_calls_keep_the_same_identity_and_arguments() {
+        for path in [
+            serde_json::Value::String("/tmp/rollout.jsonl".into()),
+            serde_json::Value::Bool(false),
+        ] {
+            for tool in ["collaborationspawn_agent", "collaborationwait_agent"] {
+                let body = serde_json::json!({
+                    "hook_event_name":"PreToolUse", "session_id":"s1", "transcript_path":path,
+                    "tool_name":tool, "tool_use_id":"c1",
+                    "tool_input": if tool == "collaborationspawn_agent" {
+                        serde_json::json!({"task_name":"child","message":"report","fork_turns":"none"})
+                    } else { serde_json::json!({"timeout_ms":1000}) }
+                });
+                let Some(HookEvent::ToolCall {
+                    actor, call, call_id, ..
+                }) = parse(body.to_string().as_bytes()).unwrap()
+                else {
+                    panic!("persistent collaboration call did not parse: {body}")
+                };
+                assert_eq!(actor.root.0, "codex:s1");
+                assert_eq!(call.tool, tool);
+                assert_eq!(call_id.as_deref(), Some("c1"));
+            }
+        }
+    }
+
+    #[test]
+    fn ephemeral_spawn_refuses_inherited_parent_turns() {
+        for fork_turns in [serde_json::Value::Null, serde_json::json!("all"), serde_json::json!(3)] {
+            let body = serde_json::json!({
+                "hook_event_name":"PreToolUse", "session_id":"s1", "transcript_path":null,
+                "tool_name":"collaborationspawn_agent", "tool_use_id":"c1",
+                "tool_input":{"task_name":"child","message":"report","fork_turns":fork_turns}
+            });
+            assert!(parse(body.to_string().as_bytes()).is_err(), "{body}");
+        }
+    }
+
+    #[test]
+    fn wait_result_admits_only_the_observed_completion_status() {
+        for response in [
+            r#"{"message":"Wait completed.","timed_out":false}"#,
+            r#"{"message":"Wait completed.","timed_out":false,"child":"raw"}"#,
+            r#"{"message":"raw child text","timed_out":false}"#,
+            r#"{"message":"Wait timed out.","timed_out":true}"#,
+        ] {
+            let body = serde_json::json!({
+                "hook_event_name":"PostToolUse", "session_id":"s1", "transcript_path":null,
+                "tool_name":"collaborationwait_agent", "tool_use_id":"c1", "tool_input":{},
+                "tool_response":response
+            });
+            assert_eq!(
+                parse(body.to_string().as_bytes()).is_ok(),
+                response == r#"{"message":"Wait completed.","timed_out":false}"#
+            );
+        }
+    }
+
+    #[test]
+    fn child_return_and_parent_cancellation_have_separate_actors() {
+        let stop = br#"{"hook_event_name":"SubagentStop","session_id":"s1","agent_id":"child-uuid","last_assistant_message":"private"}"#;
+        let Some(HookEvent::ChildEnd { root, child, value }) = parse(stop).unwrap() else {
+            panic!("a child stop must carry its return")
+        };
+        assert_eq!(root.0, "codex:s1");
+        assert_eq!(child.0, "codex:s1:child-uuid");
+        assert_eq!(value.as_deref(), Some("private"));
+
+        let interrupt = br#"{"hook_event_name":"Interrupt","session_id":"s1"}"#;
+        let Some(HookEvent::TurnEnd { actor }) = parse(interrupt).unwrap() else {
+            panic!("the parent interruption must end its turn")
+        };
+        assert_eq!(actor.root.0, root.0);
+        assert!(actor.child.is_none());
+    }
+
+    #[test]
+    fn child_stop_requires_a_reported_message() {
+        for value in [None, Some(serde_json::Value::Null)] {
+            let mut body = serde_json::json!({
+                "hook_event_name":"SubagentStop", "session_id":"s1", "agent_id":"child-uuid"
+            });
+            if let Some(value) = value {
+                body["last_assistant_message"] = value;
+            }
+            assert!(parse(body.to_string().as_bytes()).is_err(), "{body}");
+        }
+        let empty = br#"{"hook_event_name":"SubagentStop","session_id":"s1","agent_id":"child-uuid","last_assistant_message":""}"#;
+        assert!(matches!(parse(empty), Ok(Some(HookEvent::ChildEnd { value: Some(value), .. })) if value.is_empty()));
     }
 }

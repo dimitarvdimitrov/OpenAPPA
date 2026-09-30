@@ -409,6 +409,7 @@ pub(crate) enum ChildReturnDecision {
 pub(crate) enum SpawnResultDecision {
     Return(ChildReturnDecision),
     Outcome(ToolResultDecision),
+    Launched { task_path: String },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -521,6 +522,10 @@ pub(crate) enum EventError {
     NotAChild,
     #[error("the spawn did not take: no prepared fork to open this child")]
     SpawnNotTaken,
+    #[error("the Codex spawn result has no valid launch receipt")]
+    InvalidLaunchReceipt,
+    #[error("the Codex wait completed without an unused checked child return")]
+    UncheckedCodexWait,
     #[error("the family has more than one spawn in flight; the child cannot be tied to one")]
     SpawnAmbiguous,
     #[error("the fork and the child are already bound elsewhere")]
@@ -606,6 +611,7 @@ impl EventError {
             | EventError::UnknownOffer
             | EventError::NotAChild
             | EventError::SpawnNotTaken
+            | EventError::InvalidLaunchReceipt
             | EventError::SpawnAmbiguous
             | EventError::UndeclaredSpawn { .. }
             | EventError::BindingMismatch => false,
@@ -1398,6 +1404,42 @@ fn read_refused(error: appa_eventlog::ReadError) -> EventError {
 }
 
 impl Runtime {
+    /// Record the launcher evidence in the root's existing host log.
+    pub(crate) fn record_protected_codex_root(&self, root: &TrajectoryId, invocation: &str) -> Result<(), EventError> {
+        self.inner.append_host_with(root, |log| {
+            let present = log.host_records().iter().any(|record| {
+                matches!(
+                    &record.observation,
+                    HostObservation::ProtectedCodexRoot { root: recorded, invocation: value }
+                        if recorded == root && value == invocation
+                )
+            });
+            Ok((
+                (!present).then(|| HostObservation::ProtectedCodexRoot {
+                    root: root.clone(),
+                    invocation: invocation.to_owned(),
+                }),
+                (),
+            ))
+        })
+    }
+
+    pub(crate) fn protected_codex_root(&self, root: &TrajectoryId, invocation: &str) -> bool {
+        self.inner.log(root).is_ok_and(|log| {
+            log.host_records()
+                .iter()
+                .rev()
+                .find_map(|record| match &record.observation {
+                    HostObservation::ProtectedCodexRoot {
+                        root: recorded,
+                        invocation,
+                    } if recorded == root => Some(invocation.as_str()),
+                    _ => None,
+                })
+                == Some(invocation)
+        })
+    }
+
     #[cfg(feature = "daemon")]
     pub(crate) fn file_initial_label(
         &self,

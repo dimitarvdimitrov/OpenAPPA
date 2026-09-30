@@ -118,6 +118,7 @@ impl SpawnMark {
 pub enum EngineEvent {
     Proposals(ProposalBatch),
     Outcome(ToolReport),
+    LaunchOutcome { report: ToolReport, task_path: String },
     ChildReturn(ChildReport),
     BindFork(ForkBinding),
     ExecuteOffer(OfferExecution),
@@ -473,6 +474,8 @@ pub enum TransitionError {
     SpawnMarkOutOfRange,
     #[error("the binding names no live prepared fork")]
     UnbindableFork,
+    #[error("the launch receipt does not match a live prepared spawn")]
+    InvalidLaunchReceipt,
     #[error("the return does not address the fork that opened this child")]
     ReturnForkMismatch,
     #[error("a fork takes an unused child identity")]
@@ -778,6 +781,8 @@ pub enum TransitionRefusal {
     ForkAlreadyBound,
     #[error("the spawn that prepared this fork recorded a failure, so it can open no child")]
     SpawnFailed,
+    #[error("the launch receipt does not name one live prepared spawn, or conflicts with its first receipt")]
+    InvalidLaunchReceipt,
     #[error("one proposal batch identity is bound to two different decisions")]
     BatchIdentityConflict,
     #[error("a decision record claims a release its log never opened")]
@@ -1379,6 +1384,22 @@ impl<'a> Sequence<'a> {
                 // The policy is the one the release's spent approval declared, and nothing else.
                 if self.spawn_policies.remove(fork.dispatch()).as_ref() != Some(return_policy) {
                     return Err(TransitionRefusal::UnbackedReturnPolicy);
+                }
+            }
+            Fact::ForkLaunched {
+                trajectory,
+                fork,
+                task_path,
+            } => {
+                if fork.dispatch().trajectory() != trajectory
+                    || self.projection.prepared_fork(fork).is_none()
+                    || !self.projection.view(trajectory).closed_successfully(fork.dispatch())
+                    || self.projection.launch_receipt(fork).is_some()
+                    || task_path.is_empty()
+                    || task_path.len() > 256
+                    || self.projection.view(trajectory).has_ended(trajectory)
+                {
+                    return Err(TransitionRefusal::InvalidLaunchReceipt);
                 }
             }
             Fact::ForkOpened { trajectory, fork } => {
@@ -3239,6 +3260,7 @@ fn belongs_to(sequence: &Sequence<'_>, act: &crate::basis::DecidedAct, fact: &Fa
             DecidedAct::Outcome(act),
             Fact::DispatchSucceeded { dispatch, .. } | Fact::DispatchClosed { dispatch, .. },
         ) => dispatch == act,
+        (DecidedAct::Outcome(act), Fact::ForkLaunched { fork, .. }) => fork.dispatch() == act,
         // A confined hop belongs to the act that reported the outcome it derives from.
         (
             DecidedAct::Outcome(act),

@@ -65,11 +65,12 @@ impl Endpoint {
         Ok(addresses)
     }
 
-    fn request_head(&self, method: &str, path: &str, length: usize) -> String {
+    fn request_head(&self, method: &str, path: &str, length: usize, proof: Option<&str>) -> String {
+        let proof = proof.map_or(String::new(), |value| format!("X-Appa-Codex-Proof: {value}\r\n"));
         format!(
             "{method} {}{path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n\
-             Content-Length: {length}\r\nConnection: close\r\n\r\n",
-            self.prefix, self.authority
+             {proof}Content-Length: {length}\r\nConnection: close\r\n\r\n",
+            self.prefix, self.authority,
         )
     }
 
@@ -136,7 +137,30 @@ pub(crate) fn request(
     body: &[u8],
     deadline: &Deadline,
 ) -> Result<Answer, String> {
-    request_with_route(endpoint, method, path, body, deadline, None, MAX_HTTP_BYTES)
+    request_with_route(endpoint, method, path, body, deadline, None, None, MAX_HTTP_BYTES)
+}
+
+pub(crate) fn request_with_proof(
+    endpoint: &Endpoint,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    deadline: &Deadline,
+    proof: &str,
+) -> Result<Answer, String> {
+    if proof.len() != 64 || !proof.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("the Codex hook proof is invalid".into());
+    }
+    request_with_route(
+        endpoint,
+        method,
+        path,
+        body,
+        deadline,
+        None,
+        Some(proof),
+        MAX_HTTP_BYTES,
+    )
 }
 
 /// The Codex execution wrapper runs inside a network sandbox whose HTTP proxy is
@@ -162,6 +186,7 @@ pub(crate) fn request_for_sandboxed_wrapper(
         body,
         deadline,
         proxy.as_ref(),
+        None,
         crate::codex::jobs::MAX_REPORT_BYTES,
     )
 }
@@ -173,6 +198,7 @@ fn request_with_route(
     body: &[u8],
     deadline: &Deadline,
     proxy: Option<&Endpoint>,
+    proof: Option<&str>,
     max_bytes: usize,
 ) -> Result<Answer, String> {
     if body.len() > max_bytes {
@@ -185,7 +211,7 @@ fn request_with_route(
 
     let head = match proxy {
         Some(_) => endpoint.proxy_request_head(method, path, body.len()),
-        None => endpoint.request_head(method, path, body.len()),
+        None => endpoint.request_head(method, path, body.len(), proof),
     };
     for part in [head.as_bytes(), body] {
         socket
@@ -288,15 +314,21 @@ mod tests {
         let plain = Endpoint::parse("http://127.0.0.1:8787").expect("a bare authority parses");
         assert_eq!(plain.authority, "127.0.0.1:8787");
         assert_eq!(
-            plain.request_head("POST", "/hook", 3),
+            plain.request_head("POST", "/hook", 3, None),
             "POST /hook HTTP/1.1\r\nHost: 127.0.0.1:8787\r\nContent-Type: application/json\r\n\
              Content-Length: 3\r\nConnection: close\r\n\r\n"
+        );
+        let proof = "a".repeat(64);
+        assert!(
+            plain
+                .request_head("POST", "/hook", 3, Some(&proof))
+                .contains(&format!("X-Appa-Codex-Proof: {proof}\r\n"))
         );
 
         let nested = Endpoint::parse("http://127.0.0.1:8787/appa/").expect("a prefix parses");
         assert!(
             nested
-                .request_head("GET", "/health", 0)
+                .request_head("GET", "/health", 0, None)
                 .starts_with("GET /appa/health HTTP/1.1\r\n")
         );
 

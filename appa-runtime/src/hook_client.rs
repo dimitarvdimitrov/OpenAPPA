@@ -18,7 +18,7 @@ use appa_runtime_api::{
     AdapterName, Codec, HookDecision, HookEvent, ParseRefusal, ToolOutcome, WireDecision, WireEvent,
 };
 
-use crate::loopback_http::{Answer, Deadline, Endpoint, get, request};
+use crate::loopback_http::{Answer, Deadline, Endpoint, get, request, request_with_proof};
 use crate::runtime_start::{self, Deployment};
 use crate::runtime_url::RuntimeTarget;
 
@@ -60,6 +60,32 @@ impl Decides {
 
 fn post(endpoint: &Endpoint, event: &[u8], deadline: &Deadline) -> Result<Answer, String> {
     request(endpoint, "POST", "/hook", event, deadline)
+}
+
+fn codex_proof() -> Result<Option<String>, String> {
+    let Some(path) = std::env::var_os("APPA_CODEX_PROOF_FILE") else {
+        return Ok(None);
+    };
+    let proof = std::fs::read_to_string(path).map_err(|error| format!("Codex hook proof is unavailable: {error}"))?;
+    let proof = proof.trim();
+    if proof.len() != 64 || !proof.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Codex hook proof is invalid".into());
+    }
+    Ok(Some(proof.to_owned()))
+}
+
+fn persistent_codex_collaboration(body: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return false;
+    };
+    let event = value.get("hook_event_name").and_then(serde_json::Value::as_str);
+    let tool = value.get("tool_name").and_then(serde_json::Value::as_str);
+    matches!(event, Some("PreToolUse" | "PostToolUse"))
+        && matches!(
+            tool,
+            Some("spawn_agent" | "collaborationspawn_agent" | "collaborationwait_agent")
+        )
+        && value.get("transcript_path") != Some(&serde_json::Value::Null)
 }
 
 /// The blocking hook outcome. Claude Code reads stderr as the reason it blocked.
@@ -148,6 +174,38 @@ fn codex_unparsed_turn_gate(body: &[u8]) -> bool {
         })
 }
 
+fn codex_unparsed_pre_tool_gate(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .is_some_and(|event| event.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("PreToolUse"))
+}
+
+fn deny_codex_pre_tool(failure: &str) -> ExitCode {
+    eprintln!("OpenAPPA hook denied the Codex call: {failure}");
+    deliver(&codex_pre_denial(failure))
+}
+
+fn codex_pre_denial(failure: &str) -> serde_json::Value {
+    serde_json::json!({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": failure
+    }})
+}
+
+fn codex_entrypoint_failure(expected: &str, failure: &str) -> ExitCode {
+    let response = match expected {
+        "PreToolUse" => codex_pre_denial(failure),
+        "PostToolUse" | "SubagentStop" => serde_json::json!({"decision": "block", "reason": failure}),
+        _ => serde_json::json!({"continue": false, "stopReason": failure}),
+    };
+    deliver(&response)
+}
+
+pub fn codex_panic_response(expected: &str) -> ExitCode {
+    codex_entrypoint_failure(expected, "the Codex hook handler failed")
+}
+
 /// The host event read as the typed event it reports: `None` for a hook the adapter does
 /// not gate, whose answer is the empty opinion without a round trip.
 fn parse_host_event(codec: &Codec, host_event: &[u8]) -> Result<Option<HookEvent>, String> {
@@ -180,7 +238,16 @@ pub(crate) fn session_is_gated() -> bool {
 /// SessionStart entry that starts the runtime is the one that posts to it, and a
 /// start that fails blocks like an unanswered hook rather than posting into
 /// nothing.
-pub fn run(target: &RuntimeTarget, host: AdapterName, turn_end: bool, ensure: Option<&Deployment>) -> ExitCode {
+pub fn run(
+    target: &RuntimeTarget,
+    host: AdapterName,
+    turn_end: bool,
+    ensure: Option<&Deployment>,
+    expected_event: Option<&str>,
+) -> ExitCode {
+    if expected_event.is_some() && host != AdapterName::Codex {
+        return block("an event-specific hook requires the Codex adapter");
+    }
     if !session_is_gated() {
         return ExitCode::SUCCESS;
     }
@@ -192,8 +259,47 @@ pub fn run(target: &RuntimeTarget, host: AdapterName, turn_end: bool, ensure: Op
         }
     };
     let mut host_event = Vec::new();
-    if let Err(error) = std::io::stdin().read_to_end(&mut host_event) {
-        return block(&format!("the hook event could not be read: {error}"));
+    let read = if expected_event.is_some() {
+        std::io::stdin().take(1024 * 1024 + 1).read_to_end(&mut host_event)
+    } else {
+        std::io::stdin().read_to_end(&mut host_event)
+    };
+    if let Err(error) = read {
+        let failure = format!("the hook event could not be read: {error}");
+        return expected_event.map_or_else(
+            || block(&failure),
+            |expected| codex_entrypoint_failure(expected, &failure),
+        );
+    }
+    if let Some(expected) = expected_event {
+        if host_event.len() > 1024 * 1024 {
+            return codex_entrypoint_failure(expected, "the Codex hook event exceeds its byte limit");
+        }
+        let actual = serde_json::from_slice::<serde_json::Value>(&host_event)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("hook_event_name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            });
+        if actual.as_deref() != Some(expected) {
+            return codex_entrypoint_failure(expected, "the Codex hook event does not match its entrypoint");
+        }
+    }
+    if host == AdapterName::Codex && persistent_codex_collaboration(&host_event) {
+        match codex_proof() {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => {
+                return unanswered(
+                    &codec,
+                    host,
+                    Unanswered::Unparsed(&host_event),
+                    "persistent Codex subagents require a protected launcher",
+                    Decides::Authorization,
+                );
+            }
+        }
     }
     let codex_turn_boundary = host == AdapterName::Codex
         && serde_json::from_slice::<serde_json::Value>(&host_event)
@@ -285,6 +391,11 @@ pub fn run(target: &RuntimeTarget, host: AdapterName, turn_end: bool, ensure: Op
         Err(failure) => return unanswered(&codec, host, Unanswered::Event(&event), &failure, decides),
     };
     let answered = Endpoint::parse(&target.url).and_then(|endpoint| {
+        let proof = if host == AdapterName::Codex {
+            codex_proof()?
+        } else {
+            None
+        };
         if host == AdapterName::Codex {
             let identity = get(&endpoint, "/adapter", &Deadline::spanning(Duration::from_secs(2)))?;
             if !identity.is_success() || identity.body != b"codex" {
@@ -297,11 +408,20 @@ pub fn run(target: &RuntimeTarget, host: AdapterName, turn_end: bool, ensure: Op
             let shell = std::env::var("SHELL").unwrap_or_default();
             let prepare = serde_json::to_vec(&serde_json::json!({"event": event, "shell": shell}))
                 .map_err(|error| error.to_string())?;
-            request(&endpoint, "POST", "/codex/job/prepare", &prepare, &deadline)
+            match proof.as_deref() {
+                Some(proof) => request_with_proof(&endpoint, "POST", "/codex/job/prepare", &prepare, &deadline, proof),
+                None => request(&endpoint, "POST", "/codex/job/prepare", &prepare, &deadline),
+            }
         } else if codex_exec_post {
-            request(&endpoint, "POST", "/codex/job/outer", &body, &deadline)
+            match proof.as_deref() {
+                Some(proof) => request_with_proof(&endpoint, "POST", "/codex/job/outer", &body, &deadline, proof),
+                None => request(&endpoint, "POST", "/codex/job/outer", &body, &deadline),
+            }
         } else {
-            post(&endpoint, &body, &deadline)
+            match proof.as_deref() {
+                Some(proof) => request_with_proof(&endpoint, "POST", "/hook", &body, &deadline, proof),
+                None => post(&endpoint, &body, &deadline),
+            }
         }
     });
     let answer = match answered {
@@ -385,6 +505,9 @@ fn carry_out(codec: &Codec, host: AdapterName, event: &HookEvent, refused: Refus
     if host == AdapterName::Codex && codex_can_stop_turn(event) {
         return stop_codex_turn(failure);
     }
+    if host == AdapterName::Codex && matches!(event, HookEvent::ToolCall { .. }) {
+        return deny_codex_pre_tool(failure);
+    }
     match refused {
         Refused::Withheld(withholding) => withhold(&(codec.render)(event, &withholding), failure),
         // The exit code stops the call either way; where the answer's own rendering could
@@ -442,6 +565,14 @@ fn unanswered(codec: &Codec, host: AdapterName, hook: Unanswered<'_>, failure: &
     {
         return stop_codex_turn(failure);
     }
+    if host == AdapterName::Codex
+        && match &hook {
+            Unanswered::Event(event) => matches!(event, HookEvent::ToolCall { .. }),
+            Unanswered::Unparsed(body) => codex_unparsed_pre_tool_gate(body),
+        }
+    {
+        return deny_codex_pre_tool(failure);
+    }
     match withholding(codec, hook, failure) {
         Some(withholding) => withhold(&withholding, failure),
         None => block(failure),
@@ -492,6 +623,32 @@ fn stands_in_for_a_result(decision: &HookDecision) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unparsed_persistent_codex_pre_call_has_an_explicit_denial() {
+        let persistent = br#"{"hook_event_name":"PreToolUse","tool_name":"collaborationspawn_agent","transcript_path":"/tmp/rollout.jsonl"}"#;
+        assert!(codex_unparsed_pre_tool_gate(persistent));
+        let denial = codex_pre_denial("Codex subagents require an ephemeral session");
+        assert_eq!(denial["hookSpecificOutput"]["hookEventName"], "PreToolUse");
+        assert_eq!(denial["hookSpecificOutput"]["permissionDecision"], "deny");
+    }
+
+    #[test]
+    fn unparsed_codex_child_stop_has_a_withholding_response() {
+        let codec = appa_adapter_codex::codec();
+        for malformed in [
+            br#"{"hook_event_name":"SubagentStop","session_id":"s1","last_assistant_message":"raw child text"}"#
+                .as_slice(),
+            br#"{"hook_event_name":"SubagentStop","session_id":"s1","agent_id":"child"}"#,
+            br#"{"hook_event_name":"SubagentStop","session_id":"s1","agent_id":"child","last_assistant_message":null}"#,
+        ] {
+            assert!(parse_host_event(&codec, malformed).is_err());
+            let answer = withholding(&codec, Unanswered::Unparsed(malformed), "invalid child return")
+                .expect("a child return needs an exit-zero replacement");
+            assert_eq!(answer["decision"], "block");
+            assert!(!answer.to_string().contains("raw child text"));
+        }
+    }
 
     #[test]
     fn a_turn_end_waits_on_less_than_an_authorization_does() {

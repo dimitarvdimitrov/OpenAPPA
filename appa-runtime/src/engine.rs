@@ -275,6 +275,12 @@ pub enum EngineEvent {
         evidence: Vec<ExternalEvidence>,
         entropy: OfferNonce,
     },
+    LaunchOutcome {
+        dispatch: EngineDispatchId,
+        task_path: String,
+        evidence: Vec<ExternalEvidence>,
+        entropy: OfferNonce,
+    },
     ExecuteOffer {
         trajectory: TrajectoryId,
         offer: OfferId,
@@ -466,6 +472,7 @@ impl From<&TransitionRefusal> for ReplayRefusalClass {
             TransitionRefusal::UnknownApproval => ReplayRefusalClass("unknown_approval"),
             TransitionRefusal::UnknownCandidate => ReplayRefusalClass("unknown_candidate"),
             TransitionRefusal::StaleSpend => ReplayRefusalClass("stale_spend"),
+            TransitionRefusal::InvalidLaunchReceipt => ReplayRefusalClass("invalid_launch_receipt"),
         }
     }
 }
@@ -769,6 +776,9 @@ pub struct RuntimeEngine {
 }
 
 impl RuntimeEngine {
+    pub(crate) fn auto_return_as_spoken(&self) -> bool {
+        self.engine.profile().auto_return_as_spoken()
+    }
     /// Whether the policy writes a contract for this tool's exact name. The wildcard does not
     /// count: it covers a name at a proposal, and a spawn under `SpawnCoverage::Declared` needs
     /// the name written.
@@ -1212,7 +1222,7 @@ impl RuntimeEngine {
             | Fact::CallApprovalConsumed { .. }
             | Fact::CandidateConsumed { .. }
             | Fact::BasisAdvanced { .. } => return Some(None),
-            Fact::ForkPrepared { .. } | Fact::ForkOpened { .. } => return Some(None),
+            Fact::ForkPrepared { .. } | Fact::ForkLaunched { .. } | Fact::ForkOpened { .. } => return Some(None),
         };
         Some(Some(event))
     }
@@ -1236,7 +1246,23 @@ impl RuntimeEngine {
                 outcome,
                 evidence,
                 entropy,
-            } => self.tool_outcome(view, &dispatch, &outcome, &evidence, &entropy, presentation),
+            } => self.tool_outcome(view, &dispatch, &outcome, &evidence, &entropy, None, presentation),
+            EngineEvent::LaunchOutcome {
+                dispatch,
+                task_path,
+                evidence,
+                entropy,
+            } => self.tool_outcome(
+                view,
+                &dispatch,
+                &ToolOutcome::Success {
+                    body: OutcomeBody::Unavailable,
+                },
+                &evidence,
+                &entropy,
+                Some(&task_path),
+                presentation,
+            ),
             EngineEvent::ExecuteOffer {
                 trajectory: owner,
                 offer,
@@ -1553,6 +1579,7 @@ impl RuntimeEngine {
         outcome: &ToolOutcome,
         evidence: &[ExternalEvidence],
         entropy: &OfferNonce,
+        task_path: Option<&str>,
         presentation: &EmbeddedPresentationOptions,
     ) -> Result<EngineDecision, EngineRefusal> {
         let judged = self.judge_under_audience(
@@ -1579,7 +1606,16 @@ impl RuntimeEngine {
                     offer_nonce: engine_nonce(entropy),
                     audience: audience.clone(),
                 };
-                self.engine.handle(view, CoreEvent::Outcome(report))
+                self.engine.handle(
+                    view,
+                    match task_path {
+                        Some(task_path) => CoreEvent::LaunchOutcome {
+                            report,
+                            task_path: task_path.to_owned(),
+                        },
+                        None => CoreEvent::Outcome(report),
+                    },
+                )
             },
         )?;
         let decision = match judged {

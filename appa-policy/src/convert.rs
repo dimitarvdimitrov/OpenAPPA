@@ -66,6 +66,7 @@ impl RawDeployment {
         Ok(ProfileDeclaration {
             starting_label,
             context_control: self.context_control.unwrap_or(false),
+            auto_return_as_spoken: self.auto_return_as_spoken.unwrap_or(false),
             dispatch: self.dispatch.unwrap_or(ExecutorClass::Assumed),
             executor_exceptions,
             confined_results: self.confined_results.into_iter().map(ToolName::new).collect(),

@@ -10,7 +10,8 @@ use appa_runtime_api::{
 
 use crate::api::{
     ChildReturnDecision, EmbeddedHookOutcome, EmbeddedPresentationOptions, EventError, LateOpen, OfferId,
-    RemedyPresentation, Runtime, Session, SpawnResultDecision, ToolCallDecision, ToolResultDecision, is_control_tool,
+    RemedyArguments, RemedyOutcome, RemedyPresentation, Runtime, Session, SpawnResultDecision, ToolCallDecision,
+    ToolResultDecision, is_control_tool,
 };
 
 fn wire(decision: &HookDecision) -> serde_json::Value {
@@ -494,13 +495,56 @@ impl Dispatcher<'_> {
         if is_control_tool(&call.tool) {
             return control_call(self.runtime, &actor, &call, ruling);
         }
-        match on_actor(self.runtime, &actor, MissingStart::OpenLate, self.options, |session| {
+        let mut decided = on_actor(self.runtime, &actor, MissingStart::OpenLate, self.options, |session| {
             let call = call.clone();
             let call_id = call_id.clone();
             async move { session.on_tool_call_identified(call, call_id, spawn).await }
         })
-        .await
+        .await;
+        if spawn
+            && call.tool == "host/codex/collaborationspawn_agent"
+            && let Ok(ToolCallDecision::Deny { offers, .. }) = &decided
         {
+            let automatic = on_actor(
+                self.runtime,
+                &actor,
+                MissingStart::Refuse,
+                self.options,
+                |session| async move { session.auto_return_as_spoken() },
+            )
+            .await
+            .unwrap_or(false);
+            if automatic
+                && let Some(offer) = offers
+                    .iter()
+                    .find(|offer| offer.returns == Some(appa_runtime_api::OfferedReturn::AsSpoken))
+            {
+                let outcome = self
+                    .runtime
+                    .execute_remedy_with(
+                        &actor,
+                        OfferId(offer.id.clone()),
+                        RemedyArguments {
+                            label: Some(crate::engine::LabelSpelling::default()),
+                            return_schema: None,
+                        },
+                    )
+                    .await;
+                if let RemedyOutcome::Authorized { call: approved } = outcome
+                    && approved.tool == call.tool
+                    && serde_json::from_str::<serde_json::Value>(approved.arguments.get()).ok()
+                        == serde_json::from_str::<serde_json::Value>(call.arguments.get()).ok()
+                {
+                    decided = on_actor(self.runtime, &actor, MissingStart::Refuse, self.options, |session| {
+                        let call = call.clone();
+                        let call_id = call_id.clone();
+                        async move { session.on_tool_call_identified(call, call_id, spawn).await }
+                    })
+                    .await;
+                }
+            }
+        }
+        match decided {
             Ok(ToolCallDecision::Allow {
                 spawn,
                 dispatch: opened,
@@ -607,6 +651,9 @@ impl Dispatcher<'_> {
         {
             Ok(SpawnResultDecision::Return(decision)) => return_decision(said, decision),
             Ok(SpawnResultDecision::Outcome(decision)) => outcome_decision(decision, self.presentation),
+            Ok(SpawnResultDecision::Launched { task_path }) => HookDecision::ReplaceOutput {
+                output: serde_json::json!({"task_name": task_path}).to_string(),
+            },
             Err(error) => fold(error, Refusal::Block),
         }
     }

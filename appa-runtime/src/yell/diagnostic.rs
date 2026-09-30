@@ -967,6 +967,7 @@ mod tests {
             Fact::CandidateConsumed { .. } => "CandidateConsumed",
             Fact::BasisAdvanced { .. } => "BasisAdvanced",
             Fact::ForkPrepared { .. } => "ForkPrepared",
+            Fact::ForkLaunched { .. } => "ForkLaunched",
             Fact::ForkOpened { .. } => "ForkOpened",
             Fact::Boundary { .. } => "Boundary",
         }
@@ -977,7 +978,7 @@ mod tests {
     /// the second catches a table left behind after one is removed or renamed.
     #[tokio::test]
     async fn the_inventory_names_every_fact_variant_and_no_others() {
-        const NAMES: [&str; 25] = [
+        const NAMES: [&str; 26] = [
             "TrajectoryOpened",
             "ValueAdmitted",
             "DispatchOpened",
@@ -1001,6 +1002,7 @@ mod tests {
             "CandidateConsumed",
             "BasisAdvanced",
             "ForkPrepared",
+            "ForkLaunched",
             "ForkOpened",
             "Boundary",
         ];

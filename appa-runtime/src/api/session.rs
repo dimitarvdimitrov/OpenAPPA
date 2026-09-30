@@ -33,6 +33,57 @@ pub(crate) fn is_control_tool(tool: &str) -> bool {
     tool == appa_runtime_api::CONTROL_TOOL
 }
 
+fn safe_codex_wait_outcome(outcome: &ToolOutcome) -> bool {
+    let ToolOutcome::Success {
+        body: OutcomeBody::Available(body),
+    } = outcome
+    else {
+        return false;
+    };
+    let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(body) else {
+        return false;
+    };
+    fields.len() == 2
+        && fields.get("message").and_then(serde_json::Value::as_str) == Some("Wait completed.")
+        && fields.get("timed_out").and_then(serde_json::Value::as_bool) == Some(false)
+}
+
+fn unused_codex_child_return(log: &appa_eventlog::Log, parent: &TrajectoryId) -> bool {
+    use appa_engine::fact::{CloseOutcome, Fact};
+    use appa_engine::value::Provenance;
+
+    let checked = log
+        .facts()
+        .iter()
+        .filter(|fact| {
+            matches!(fact, Fact::ValueAdmitted { trajectory, provenance: Provenance::ChildReturn { .. }, .. }
+                if trajectory == parent)
+        })
+        .count();
+    let wait_dispatches: std::collections::HashSet<_> = log
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact {
+            Fact::DispatchOpened {
+                trajectory,
+                dispatch,
+                tool,
+                ..
+            } if trajectory == parent && tool.as_str() == "host/codex/collaborationwait_agent" => Some(dispatch),
+            _ => None,
+        })
+        .collect();
+    let completed = log
+        .facts()
+        .iter()
+        .filter(|fact| {
+            matches!(fact, Fact::DispatchClosed { trajectory, dispatch, outcome: CloseOutcome::Success { .. } }
+                if trajectory == parent && wait_dispatches.contains(dispatch))
+        })
+        .count();
+    checked > completed
+}
+
 /// Why a reported outcome named no reportable dispatch. The threat model puts
 /// operator diagnostics for these reports on the runtime: an
 /// uncontrolled host makes integration mistakes the engine cannot
@@ -165,6 +216,9 @@ pub(crate) enum LateOpen {
 
 enum SpawnPlan {
     Outcome,
+    Launch {
+        task_path: String,
+    },
     Bind {
         fork: appa_engine::value::ForkId,
         child: TrajectoryId,
@@ -181,6 +235,30 @@ const UNCHECKED_RETURN: &str = "[appa] the subagent ended outside the return che
 /// Blocks subsequent output from a child that already ended without a return.
 const ENDED_CHILD: &str = "[appa] this subagent ended without a return; nothing it says now can cross. Stop with an \
                            empty final message (send no text or explanation).";
+
+fn launch_task_path(outcome: &ToolOutcome) -> Option<String> {
+    let ToolOutcome::Success {
+        body: OutcomeBody::Available(body),
+    } = outcome
+    else {
+        return None;
+    };
+    let receipt: serde_json::Value = serde_json::from_str(body).ok()?;
+    let fields = receipt.as_object()?;
+    if fields.len() != 1 {
+        return None;
+    }
+    let task_path = fields.get("task_name")?.as_str()?;
+    (task_path.starts_with("/root/")
+        && task_path.len() <= 256
+        && task_path[1..].split('/').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        }))
+    .then(|| task_path.to_owned())
+}
 
 fn outcome_decision(
     decision: EngineDecision,
@@ -266,6 +344,10 @@ pub struct Session {
 }
 
 impl Session {
+    pub(crate) fn auto_return_as_spoken(&self) -> Result<bool, EventError> {
+        let log = self.inner.log(&self.root)?;
+        Ok(self.policy(&log)?.engine().auto_return_as_spoken())
+    }
     pub(super) fn attach(
         inner: Arc<Inner>,
         deployment: Arc<Deployment>,
@@ -629,6 +711,17 @@ impl Session {
         match decision.then {
             Next::ModelResponse { invocations, feedback } => match (invocations.as_slice(), feedback.as_slice()) {
                 ([released], []) => {
+                    if spawn
+                        && matches!(
+                            call.tool.as_str(),
+                            "host/codex/collaborationspawn_agent" | "host/codex/spawn_agent"
+                        )
+                        && released.fork.is_none()
+                    {
+                        self.abandon_dispatch(released.dispatch.clone(), &ToolOutcome::Indeterminate)
+                            .await?;
+                        return Err(EventError::SpawnNotTaken);
+                    }
                     tracing::debug!(
                         trajectory = %self.trajectory.0,
                         tool = %released.tool,
@@ -843,6 +936,11 @@ impl Session {
                     Ok(dispatch) => dispatch,
                     Err(case) => return Err(self.refuse_report(case, call, &open)),
                 };
+                if call.tool == "host/codex/collaborationwait_agent"
+                    && (!safe_codex_wait_outcome(o) || !unused_codex_child_return(context.log, &self.trajectory))
+                {
+                    return Err(EventError::UncheckedCodexWait);
+                }
                 Ok(EngineEvent::ToolOutcome {
                     dispatch,
                     outcome: o.clone(),
@@ -917,6 +1015,10 @@ impl Session {
         value: Option<String>,
     ) -> Result<SpawnResultDecision, EventError> {
         let outcome = self.cap_outcome(outcome);
+        let codex_launch = call.tool == "host/codex/collaborationspawn_agent";
+        let task_path = (codex_launch && child.is_none() && value.is_none())
+            .then(|| launch_task_path(&outcome))
+            .flatten();
         // At most two engine events: the binding, then the result on the bound fork.
         for _ in 0..2 {
             // The attempt that commits is the one whose plan the delivery below
@@ -932,11 +1034,21 @@ impl Session {
                         };
                         let fork = appa_engine::value::ForkId::of(&dispatch);
                         let next = match (context.fork_status(&fork), &child) {
+                            _ if codex_launch && (child.is_some() || value.is_some() || task_path.is_none()) => {
+                                SpawnPlan::Close(EventError::InvalidLaunchReceipt)
+                            }
                             _ if matches!(outcome, ToolOutcome::Indeterminate) => SpawnPlan::Outcome,
+                            (ForkStatus::Unprepared, _) if codex_launch => SpawnPlan::Close(EventError::SpawnNotTaken),
                             (ForkStatus::Unprepared, _) => SpawnPlan::Outcome,
                             (ForkStatus::Prepared, Some(child)) => SpawnPlan::Bind {
                                 fork: fork.clone(),
                                 child: child.clone(),
+                            },
+                            (ForkStatus::Prepared | ForkStatus::Bound(_), None) if codex_launch => match &task_path {
+                                Some(task_path) => SpawnPlan::Launch {
+                                    task_path: task_path.clone(),
+                                },
+                                None => SpawnPlan::Close(EventError::InvalidLaunchReceipt),
                             },
                             (ForkStatus::Prepared, None) | (ForkStatus::Failed | ForkStatus::ParentEnded, _) => {
                                 SpawnPlan::Close(EventError::SpawnNotTaken)
@@ -954,6 +1066,12 @@ impl Session {
                             SpawnPlan::Outcome => EngineEvent::ToolOutcome {
                                 dispatch,
                                 outcome: outcome.clone(),
+                                evidence,
+                                entropy: fresh_entropy(),
+                            },
+                            SpawnPlan::Launch { task_path } => EngineEvent::LaunchOutcome {
+                                dispatch,
+                                task_path: task_path.clone(),
                                 evidence,
                                 entropy: fresh_entropy(),
                             },
@@ -992,6 +1110,10 @@ impl Session {
             match plan.expect("the spawn result is typed before the engine decides") {
                 SpawnPlan::Outcome => {
                     return outcome_decision(decision, &self.deployment.externals).map(SpawnResultDecision::Outcome);
+                }
+                SpawnPlan::Launch { task_path } => {
+                    outcome_decision(decision, &self.deployment.externals)?;
+                    return Ok(SpawnResultDecision::Launched { task_path });
                 }
                 SpawnPlan::Close(refusal) => return Err(refusal),
                 SpawnPlan::Bind { child, .. } => match decision.then {

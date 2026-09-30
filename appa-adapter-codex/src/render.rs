@@ -65,13 +65,29 @@ pub(crate) fn render(event: &HookEvent, decision: &HookDecision) -> serde_json::
 
 pub(crate) fn withholding(body: &[u8], reason: &str) -> Option<serde_json::Value> {
     let event: serde_json::Value = serde_json::from_slice(body).ok()?;
-    (event.get("hook_event_name")?.as_str()? == "PostToolUse").then(|| block(reason))
+    matches!(event.get("hook_event_name")?.as_str()?, "PostToolUse" | "SubagentStop").then(|| block(reason))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use appa_runtime_api::{Actor, ProposedCall, ToolOutcome, TrajectoryId};
+
+    #[test]
+    fn unreadable_child_stop_has_a_blocking_fallback() {
+        for body in [
+            br#"{"hook_event_name":"SubagentStop","session_id":"s1","last_assistant_message":"raw"}"#.as_slice(),
+            br#"{"hook_event_name":"SubagentStop","session_id":"s1","agent_id":"child","last_assistant_message":42}"#,
+            br#"{"hook_event_name":"SubagentStop","session_id":"s1","agent_id":"child"}"#,
+            br#"{"hook_event_name":"SubagentStop","session_id":"s1","agent_id":"child","last_assistant_message":null}"#,
+        ] {
+            assert!((crate::codec().parse)(body).is_err());
+            assert_eq!(
+                withholding(body, "unreadable stop"),
+                Some(serde_json::json!({"decision":"block","reason":"unreadable stop"}))
+            );
+        }
+    }
 
     #[test]
     fn ordinary_admission_is_a_valid_no_op_for_codex() {

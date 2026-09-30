@@ -788,6 +788,15 @@ static FORK_OPENED: Table = Table {
     entries: &[("trajectory", TRAJECTORY), ("fork", Rule::Table(&DISPATCH_ID))],
 };
 
+static FORK_LAUNCHED: Table = Table {
+    name: "ForkLaunched",
+    entries: &[
+        ("trajectory", TRAJECTORY),
+        ("fork", Rule::Table(&DISPATCH_ID)),
+        ("task_path", Rule::Never),
+    ],
+};
+
 static BOUNDARY: Table = Table {
     name: "Boundary",
     entries: &[("trajectory", TRAJECTORY), ("kind", Rule::Table(&BOUNDARY_KIND))],
@@ -822,6 +831,7 @@ pub(crate) static FACT: Table = Table {
         ("CandidateConsumed", Rule::Table(&CANDIDATE_CONSUMED)),
         ("BasisAdvanced", Rule::Table(&BASIS_ADVANCED)),
         ("ForkPrepared", Rule::Table(&FORK_PREPARED)),
+        ("ForkLaunched", Rule::Table(&FORK_LAUNCHED)),
         ("ForkOpened", Rule::Table(&FORK_OPENED)),
         ("Boundary", Rule::Table(&BOUNDARY)),
     ],
