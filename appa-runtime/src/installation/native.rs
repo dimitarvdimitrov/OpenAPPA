@@ -165,6 +165,24 @@ impl ClaudeArtifacts {
         Ok(())
     }
 
+    pub fn activate_codex(&self, config: &Path) -> Result<(), InstallError> {
+        invoke(
+            &self.binary,
+            &["activate-codex".as_ref(), "--config".as_ref(), config.as_os_str()],
+            Duration::from_secs(120),
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_codex(&self, config: &Path) -> Result<(), InstallError> {
+        invoke(
+            &self.binary,
+            &["remove-codex".as_ref(), "--config".as_ref(), config.as_os_str()],
+            Duration::from_secs(120),
+        )?;
+        Ok(())
+    }
+
     pub fn remove(&self, config: &Path) -> Result<(), InstallError> {
         invoke(
             &self.binary,

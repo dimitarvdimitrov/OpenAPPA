@@ -382,7 +382,10 @@ impl Acquired {
 
 impl Selection {
     pub(super) fn requirements(&self) -> Requirements {
-        match (self.plugins.contains("claude-code"), self.plugins.contains("kagent")) {
+        match (
+            self.plugins.contains("claude-code") || self.plugins.contains("codex"),
+            self.plugins.contains("kagent"),
+        ) {
             (true, true) => Requirements::Both(self.platform),
             (true, false) => Requirements::Claude(self.platform),
             (false, true) => Requirements::Kagent,

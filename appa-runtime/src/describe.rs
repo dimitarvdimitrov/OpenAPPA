@@ -426,6 +426,7 @@ pub fn render(path: &Path, battery_dirs: &[PathBuf], adapter: &'static str, sess
     let served = match adapter {
         "amp" => Some(appa_adapter_amp::adapter()),
         "claude-code" => Some(appa_adapter_claude_code::adapter()),
+        "codex" => Some(appa_adapter_codex::adapter()),
         "kagent" => Some(appa_adapter_kagent::adapter()),
         _ => None,
     };
@@ -542,9 +543,16 @@ pub fn render(path: &Path, battery_dirs: &[PathBuf], adapter: &'static str, sess
     }
     let session = served.map(|served| SessionCoverage::of(session_tools, served, served_policy.as_ref()));
     #[cfg(feature = "daemon")]
-    if adapter == "claude-code" {
+    if matches!(adapter, "claude-code" | "codex") {
         let servers = std::env::current_dir()
-            .map(|cwd| crate::installation::discover::servers(appa_package::Host::ClaudeCode, &cwd))
+            .map(|cwd| {
+                let host = if adapter == "codex" {
+                    appa_package::Host::Codex
+                } else {
+                    appa_package::Host::ClaudeCode
+                };
+                crate::installation::discover::servers(host, &cwd)
+            })
             .unwrap_or_default()
             .into_iter()
             .chain(session.iter().flat_map(|session| session.servers.iter().cloned()))
@@ -699,6 +707,7 @@ fn validation(
     let adapter = match adapter {
         "amp" => appa_adapter_amp::adapter(),
         "claude-code" => appa_adapter_claude_code::adapter(),
+        "codex" => appa_adapter_codex::adapter(),
         "kagent" => appa_adapter_kagent::adapter(),
         _ => return Err(format!("unsupported adapter {adapter:?}")),
     };

@@ -1,5 +1,12 @@
 # Codex proxy compatibility
 
+`appa codex --` inherits the user's `code_mode_host` setting.
+It enables hooks for APPA policy checks.
+Codex CLI 0.159.2 enables the shell by default.
+The [host compatibility gate](HOST_MODE_GATE.md) records Codex CLI 0.159.2 behavior.
+Codex can run an original command when it skips a hook or receives no valid response.
+The installed hook supervisor answers with a block if the APPA worker fails or exceeds its deadline.
+
 ## Probe
 
 Build `appa` with `cargo build -p appa`.
@@ -7,6 +14,13 @@ Run `python3 integrations/codex/proxy_probe.py`.
 
 The probe uses a temporary project and a temporary Codex profile. It makes no model call.
 It checks the rewritten wrapper, the admitted result, early output, and a forged job handle.
+
+## Launcher
+
+`appa plugin install codex` adds an `appa` permission profile to the active Codex config.
+`appa codex --` selects the profile and checks runtime HTTP access from `codex sandbox` before it starts Codex.
+The profile permits all sandboxed commands to reach all ports on `127.0.0.1`.
+Codex requires a manual `/hooks` review because the launcher cannot verify hook trust through a supported noninteractive interface.
 
 ## Scope
 

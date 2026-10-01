@@ -57,7 +57,7 @@ pub struct Bundle {
 )]
 pub struct Install {
     /// Host plugin to install. Omitted, the catalog is listed instead.
-    #[arg(value_parser = ["claude-code", "kagent"])]
+    #[arg(value_parser = ["claude-code", "codex", "kagent"])]
     name: Option<String>,
     /// Kagent agent runtimes to prepare; both on first install, otherwise retained.
     #[arg(long, value_enum)]
@@ -110,7 +110,7 @@ pub struct BatteryRemove {
 )]
 pub struct PluginRemove {
     /// Host plugin whose installer-owned registration is removed.
-    #[arg(value_parser = ["claude-code", "kagent"])]
+    #[arg(value_parser = ["claude-code", "codex", "kagent"])]
     name: String,
     /// Also stop the runtime and delete the default deployment's data and config directories.
     #[arg(long)]
@@ -660,9 +660,10 @@ pub fn install(args: Install) -> ExitCode {
         let platform = Platform::current()
             .ok_or_else(|| InstallError::Invalid("this platform has no published runtime binary".into()))?;
         let claude = name == "claude-code"
-            || current
-                .as_ref()
-                .is_some_and(|selection| selection.plugins.contains("claude-code"));
+            || name == "codex"
+            || current.as_ref().is_some_and(|selection| {
+                selection.plugins.contains("claude-code") || selection.plugins.contains("codex")
+            });
         let kagent = name == "kagent"
             || current
                 .as_ref()
@@ -900,11 +901,12 @@ pub(crate) fn render_server_coverage(
 /// starts — so each gets its own line under a sentence that says where it goes,
 /// rather than one sentence quoting both. Terminal output is not markdown, so
 /// neither is wrapped in backticks.
-fn guide_next(style: Style) -> String {
+fn guide_next(style: Style, plugin: &str) -> String {
+    let launch = if plugin == "codex" { "appa codex --" } else { "clappa" };
     format!(
         "\n{}\n{}\n\n{}\n{}",
         crate::style::lead("Next, start a protected session:"),
-        style.commands(&["clappa".to_owned()]),
+        style.commands(&[launch.to_owned()]),
         crate::style::lead("Then, inside it, check your MCP servers and tune the defaults:"),
         style.commands(&["/appa-guide".to_owned()]),
     )
@@ -922,7 +924,11 @@ fn plugin_path(target: &Target, plugin: &str) -> Result<PathBuf, InstallError> {
                 .into(),
         ));
     }
-    Ok(target.path())
+    if plugin == "codex" && target.config.is_none() {
+        Ok(crate::init::paths::installed_codex_config_path())
+    } else {
+        Ok(target.path())
+    }
 }
 
 fn prepared_directory(installation: &Installation) -> Result<Option<PathBuf>, InstallError> {
@@ -1438,7 +1444,7 @@ fn finish(
             // The mark, then what to do next: the install is done being
             // reported, so this is the one moment it is not in the way.
             .and_then(|()| writeln!(output, "\n{}", crate::mascot::happy(style)))
-            .and_then(|()| writeln!(output, "{}\n", guide_next(style)))
+            .and_then(|()| writeln!(output, "{}\n", guide_next(style, plugin)))
         }
     } else if let Some(batteries) = receipt.result.as_ref().and_then(|result| result.get("batteries")) {
         (|| {

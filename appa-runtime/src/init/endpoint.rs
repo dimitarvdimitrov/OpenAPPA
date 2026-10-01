@@ -15,6 +15,7 @@ use super::config::ComposedPolicy;
 use super::paths::same_file;
 #[cfg(windows)]
 use super::powershell;
+use appa_runtime_api::AdapterName;
 
 /// The address the deployment's runtime listens on and every consumer talks to.
 ///
@@ -29,8 +30,17 @@ pub struct Endpoint {
 
 impl Endpoint {
     pub(super) fn resolve() -> Result<Self, InitError> {
+        Self::resolve_for(AdapterName::ClaudeCode)
+    }
+
+    pub(super) fn resolve_for(adapter: AdapterName) -> Result<Self, InitError> {
         let configured = debug_override("APPA_ENDPOINT");
-        Self::parse(configured.as_deref().unwrap_or(crate::runtime_url::DEFAULT_RUNTIME_URL))
+        let default = if adapter == AdapterName::Codex {
+            crate::runtime_url::DEFAULT_CODEX_RUNTIME_URL
+        } else {
+            crate::runtime_url::DEFAULT_RUNTIME_URL
+        };
+        Self::parse(configured.as_deref().unwrap_or(default))
     }
 
     /// `http://` plus a loopback literal and a port. No path, no trailing slash,
@@ -433,7 +443,7 @@ pub(super) fn reconcile_policy(
 
 /// The policy key the endpoint answers under. A runtime that does not answer for one
 /// cannot be reconciled, and a plugin bound to it is the skew init exists to prevent.
-fn serving_policy_key(endpoint: &Endpoint) -> Result<String, InitError> {
+pub(super) fn serving_policy_key(endpoint: &Endpoint) -> Result<String, InitError> {
     let refused = |message: String| InitError::PolicyKey {
         endpoint: endpoint.url().to_owned(),
         message,

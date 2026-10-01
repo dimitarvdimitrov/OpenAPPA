@@ -18,6 +18,11 @@ pub(super) const TEXT: &str = concat!(
     "\n\n",
     include_str!("../../../integrations/appa-guide/references/claude-code.md"),
 );
+const CODEX_TEXT: &str = concat!(
+    include_str!("../../../integrations/appa-guide/SKILL.md"),
+    "\n\n",
+    include_str!("../../../integrations/appa-guide/references/codex.md"),
+);
 
 const CONTRACTS: &str = include_str!("../../../website/content/docs/contracts.md");
 
@@ -104,9 +109,83 @@ pub(super) fn remove(claude_dir: &Path) -> Result<(), InitError> {
     Ok(())
 }
 
+pub(super) fn install_codex(codex_dir: &Path, compensation: &mut Compensation) -> Result<(), InitError> {
+    let skill = path(codex_dir);
+    match file_before(&skill)? {
+        Some(bytes) if !bytes.starts_with(OWNED_PREFIX.as_bytes()) => {
+            return Err(InitError::SkillConflict { path: skill });
+        }
+        _ => {}
+    }
+    if file_before(&skill)?.as_deref() != Some(CODEX_TEXT.as_bytes()) {
+        write(&skill, CODEX_TEXT, compensation)?;
+    }
+    let contracts = contracts_path(codex_dir);
+    if file_before(&contracts)?.as_deref() != Some(CONTRACTS.as_bytes()) {
+        write(&contracts, CONTRACTS, compensation)?;
+    }
+    Ok(())
+}
+
+pub(super) fn remove_codex(codex_dir: &Path, compensation: &mut Compensation) -> Result<(), InitError> {
+    let skill = path(codex_dir);
+    let before = file_before(&skill)?;
+    match before.as_deref() {
+        None => return Ok(()),
+        Some(bytes) if bytes.starts_with(OWNED_PREFIX.as_bytes()) => {}
+        Some(_) => return Err(InitError::SkillConflict { path: skill }),
+    }
+    let contracts = contracts_path(codex_dir);
+    for path in [&contracts, &skill] {
+        if let Some(before) = file_before(path)? {
+            compensation.record(Undo::File {
+                path: path.clone(),
+                before: Some(before),
+            });
+            fs::remove_file(path).map_err(|source| InitError::WriteFile {
+                path: path.clone(),
+                source,
+            })?;
+        }
+    }
+    let _ = fs::remove_dir(contracts.parent().expect("contracts parent"));
+    let _ = fs::remove_dir(skill.parent().expect("skill parent"));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_contract_reference_is_repaired_without_rewriting_the_current_skill() {
+        let root = tempfile::tempdir().unwrap();
+        let mut compensation = Compensation::default();
+        install_codex(root.path(), &mut compensation).unwrap();
+        assert_eq!(compensation.done.len(), 2);
+        compensation.commit();
+        let mut compensation = Compensation::default();
+        let contracts = contracts_path(root.path());
+        fs::remove_file(&contracts).unwrap();
+        install_codex(root.path(), &mut compensation).unwrap();
+        assert_eq!(compensation.done.len(), 1);
+        assert_eq!(fs::read_to_string(&contracts).unwrap(), CONTRACTS);
+        assert_eq!(fs::read_to_string(path(root.path())).unwrap(), CODEX_TEXT);
+        compensation.commit();
+        let mut compensation = Compensation::default();
+        fs::write(
+            root.path().join("skills/appa-guide/references/custom.md"),
+            "operator reference",
+        )
+        .unwrap();
+        remove_codex(root.path(), &mut compensation).unwrap();
+        assert!(!contracts.exists());
+        assert!(!path(root.path()).exists());
+        assert!(root.path().join("skills/appa-guide/references/custom.md").exists());
+        compensation.unwind().unwrap();
+        assert_eq!(fs::read_to_string(&contracts).unwrap(), CONTRACTS);
+        assert_eq!(fs::read_to_string(path(root.path())).unwrap(), CODEX_TEXT);
+    }
 
     #[test]
     fn the_compiled_skill_is_the_router_with_the_claude_code_reference_inlined() {

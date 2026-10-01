@@ -171,6 +171,7 @@ jobs:
           cd verify
           test -x "./${EXECUTABLE}"
           "./${EXECUTABLE}" plugin install claude-code --help >/dev/null
+          "./${EXECUTABLE}" plugin install codex --help >/dev/null
 
           # Every debug-only seam is read through one gate that
           # [profile.release] pins shut, so a released binary must ignore a
@@ -293,6 +294,10 @@ jobs:
             & $cli plugin install claude-code --help | Out-Null
             if ($LASTEXITCODE -ne 0) {
               throw "Extracted $env:EXECUTABLE does not expose plugin install claude-code"
+            }
+            & $cli plugin install codex --help | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Extracted $env:EXECUTABLE does not expose plugin install codex"
             }
             # Every debug-only seam is read through one gate that
             # [profile.release] pins shut, so a released binary must ignore a

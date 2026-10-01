@@ -37,6 +37,25 @@ pub fn installed_config_path() -> PathBuf {
     }
 }
 
+/// Codex has its own policy and installer state beside, not inside, Claude's.
+pub fn installed_codex_config_path() -> PathBuf {
+    installed_config_path().parent().map_or_else(
+        || PathBuf::from("codex/appa.toml"),
+        |parent| parent.join("codex/appa.toml"),
+    )
+}
+
+pub(crate) fn codex_data_dir() -> Result<PathBuf, InitError> {
+    Ok(installed_data_dir()?.ok_or(InitError::MissingHome)?.join("codex"))
+}
+
+pub(crate) fn codex_config_dir() -> Result<PathBuf, InitError> {
+    match env::var_os("CODEX_HOME") {
+        Some(path) => absolute_directory(PathBuf::from(path)),
+        None => Ok(user_home().ok_or(InitError::MissingHome)?.join(".codex")),
+    }
+}
+
 pub(super) fn deployment_paths() -> Result<DeploymentPaths, InitError> {
     let home = user_home();
     let config_dir = installed_config_dir()?.ok_or(InitError::MissingHome)?;
