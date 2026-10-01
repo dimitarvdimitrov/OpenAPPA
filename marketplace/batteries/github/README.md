@@ -79,17 +79,23 @@ consult whose mandate names anything else (exit status 2) before it
 reads a token.
 
 **`context.py`** — the `github` context provider, bound under
-`[externals.context.github]`. The runtime asks it about every call owing
-a fresh annotation, before the annotator. It recognizes two kinds of
-call:
+`[externals.context.github]`. The runtime asks it about each call that
+requires a fresh annotation, before the annotator. It recognizes MCP and
+shell calls:
 
 - `mcp/github/<tool>` with `owner` and `repo`, and `pullNumber` or
-  `issue_number` when the tool names one;
-- a `Bash` command running `gh` or `git push`. The repository comes from
-  a GitHub URL, a `repos/OWNER/NAME` API path, a `gh repo` argument,
-  `--repo`/`-R`, `GH_REPO`, a pushed remote, or the checkout's git
-  config; `gh pr <verb> N` and `gh issue <verb> N` (or their URLs) name
-  the item, and `gh issue list` and `gh pr list` a listing.
+  `issue_number` when the tool names one.
+- A `Bash` or `host/codex/appa_exec` command with `gh` or `git push`.
+
+Shell calls use the same command parser and the artifact's `cwd` field.
+The provider resolves the repository from these sources:
+
+- A GitHub URL or a `repos/OWNER/NAME` API path.
+- A `gh repo` argument, `--repo`/`-R`, or `GH_REPO`.
+- A remote for `git push` or the checkout's Git configuration.
+
+`gh pr <verb> N` and `gh issue <verb> N`, or their URLs, name the item.
+`gh issue list` and `gh pr list` name a list.
 
 Any other call answers `null` without touching the network. A recognized
 call costs one GraphQL query, and the answer carries facts only:
