@@ -11,11 +11,10 @@ start.
 How it works, in one paragraph: the install registers `appa hook` in the
 user's Claude Code settings on every session event — prompt, tool call,
 tool result, subagent start and finish. Each hook posts the event to the
-runtime process and blocks the
-action unless the process answers yes. The hooks fail closed: while the
-process is down, every action in a protected session is blocked —
-silence never means yes. This covers actions at those hook boundaries, not
-every observation or emission inside Claude Code; a root Stop event reports
+runtime process and blocks a pending tool call if the runtime denies it or
+`appa hook` exits with code 2. If Claude Code skips or times out a hook,
+Claude Code uses its usual permission checks. This covers actions at those
+hook boundaries, not every observation or emission inside Claude Code; a root Stop event reports
 turn completion rather than gating already-visible output. A subagent started
 with the `Agent` tool runs
 as a child of the session. The spawn is held until the session declares

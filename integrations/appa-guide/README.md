@@ -11,14 +11,15 @@ mode, proposal and approval rules. It routes to one host reference:
   the runtime-owned `appa_update_policy` and `appa_include_battery` tools,
   which validate, publish and reload.
 
-[`PARITY.md`](PARITY.md) defines the behavior both hosts must preserve
-and the limited platform-specific differences they may expose.
+[`PARITY.md`](PARITY.md) defines the behavior all three hosts must preserve.
+It lists the limits that each host must report.
 
 kagent attaches this directory directly through `skills.gitRefs`.
 The `appa` binary compiles `SKILL.md` with the Claude reference appended,
 and `appa plugin install claude-code` writes that text to the user's
 Claude Code skills directory beside the policy-review guide. Claude
-therefore needs no gated `Read` call to bootstrap the guide. The runtime
+therefore needs no gated `Read` call to bootstrap the guide. Codex receives
+the router with its Codex reference and a bundled `references/contracts.md`. The runtime
 chart mounts a ConfigMap copy of `SKILL.md` and `references/kagent.md`
 from `charts/appa-runtime/files/skill/` over the git checkout;
 `appa-runtime/tests/guide_skill.rs` keeps that copy byte-identical to this

@@ -25,11 +25,11 @@ The wrapper starts each child with null stdin. It does not forward later input.
 
 Put required input in the original command. Do not rely on interactive prompts.
 
-Selectors match the command text, not every command's resolved file path or
-runtime behavior. Shell expansions, aliases, and scripts rely on the
-classifier. The Codex default supplies a wildcard classifier for other hooked tools.
-Explicit contracts take precedence. A missing or invalid annotation causes refusal.
-Subagent and peer-message routes remain blocked until a live test verifies their lifecycle contracts.
+Selectors match the command payload after APPA removes an optional `appa-codex-exec-v1` header.
+They do not resolve every file path or runtime behavior. Shell expansions, aliases, and scripts rely on the
+classifier. The default root classifies other hooked tools with its wildcard Annotator.
+Explicit contracts take precedence. Missing or invalid annotations cause refusal.
+Subagent and peer routes remain explicitly blocked until a verified lifecycle contract exists.
 
 For a custom root policy, include the battery with:
 
@@ -41,8 +41,13 @@ version = 2
 ```
 
 The root can place stricter command rules before the battery. The default root
-also declares `apply_patch`, local utility operations, and `webrun`. The web contract
-requires the `public` audience and labels results `suspicious`. Its patch classifier
+also declares `apply_patch`, local utility operations, and `webrun`.
+The web contract requires a `public` audience and labels results `suspicious`. Its patch classifier
 requires fresh `hitl` attention for hook and MCP configuration edits, including
 mixed patches. This requirement depends on the classifier's annotation.
 Shared MCP batteries continue to use canonical `mcp/<server>/<tool>` names.
+
+The execution header supplies an absolute directory, an absolute supported shell path, and a boolean login mode before command classification.
+Plain commands use the hook session directory and the hook's `$SHELL` with `-lc`.
+Native `exec_command` options can disappear from hook events and therefore do not select the wrapped execution context.
+See the [Codex guide](../../../website/content/docs/codex.md#command-directory-and-shell) for the header format and an explicit `cd` alternative.

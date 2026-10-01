@@ -1,17 +1,40 @@
 # Codex plugin
 
-`appa plugin install codex` installs a separate Codex policy and runtime. It registers command hooks in the active Codex profile, an `appa` HTTP MCP server, and the `/appa-guide` skill. It keeps Claude Code's deployment separate.
+`appa plugin install codex` installs a separate Codex policy and runtime.
+It registers hooks, an `appa` HTTP MCP server, a permission profile, and the `/appa-guide` skill.
+Claude Code uses a separate deployment.
 
-1. Use Codex `/hooks` to review and trust the new hooks.
-2. Start a session with `appa codex --`.
-3. To remove installer-owned registrations, use `appa plugin remove codex`.
+After installation, review and trust the APPA hooks through Codex `/hooks`.
+Start a session with `appa codex --`.
+Remove installer-owned registrations with `appa plugin remove codex`.
 
-The default policy includes the Codex battery for command contracts. The root policy supplies patch, local image, plan, web, and reporting contracts. Command, patch, local image, and unknown-tool annotations use `builtin = "codex"`. The saved Codex CLI login supplies authentication. The classifier does not need an API key in the policy.
+The launcher sets `approval_policy = "on-request"` and `approvals_reviewer = "user"` for that session.
+It sets `appa`'s `execute_remedy_plan` tool to `approval_mode = "approve"` so remedies reach APPA without a separate Codex prompt.
+APPA still requests human approval when a remedy requires it.
+The launcher preserves global Codex settings and rejects explicit conflicting approval options.
 
-The `webrun` contract requires the `public` audience and labels web results `suspicious`. It covers hooked `webrun` calls. Codex hosted `WebSearch` bypasses this [hook path](https://learn.chatgpt.com/docs/hooks). The first web call can require acceptance of the lower trust before execution.
+The default policy includes the Codex battery for command contracts.
+The root policy supplies patch, local image, plan, web, and reporting contracts.
+`host/codex/webrun` requires a `public` audience and labels web results `suspicious`.
+The first web call can require acceptance of that restriction before execution through an APPA remedy.
+Hosted `WebSearch` can bypass hooks. This contract covers the recorded local `webrun` route.
 
-Other unknown hooked tools, including `image_genimagegen` and unknown MCP tools, use the wildcard Codex classifier. Explicit contracts take precedence over this wildcard. The classifier receives the complete canonical call and its arguments. APPA checks the annotation against the session and policy before execution. Missing, failed, malformed, or timed-out annotations cause refusal.
+Other hooked tools use the `codex.undeclared-tool` wildcard Annotator with `builtin = "codex"`.
+It receives the complete canonical tool name and arguments.
+Explicit contracts take precedence over the wildcard.
+Classification determines trust, audience, and attention requirements. APPA then checks those requirements before it permits the call.
+Failed, missing, malformed, or timed-out annotations cause refusal.
+The wildcard cannot declare effects. Subagent and peer routes remain explicitly blocked until lifecycle verification.
+The default also blocks `appa_stdin` because the wrapper does not forward later input.
 
-Subagent spawn, wait, resume, close, and peer-message routes remain blocked until a live test verifies their lifecycle contracts. The default policy also blocks `appa_stdin` because the command wrapper does not forward later input.
+The command, patch, local image, and wildcard Annotators require a saved Codex CLI login.
+No API key is necessary in the policy.
+The launcher reconciles the installed policy before each new session.
+`appa codex-reload` explicitly reloads it and prints the active policy key.
+`appa codex-policy-key` reads that key without a reload.
 
-Protected command execution requires a supported Codex sandbox profile that permits HTTP to `127.0.0.1` through Codex's filtered proxy. That host permission covers all ports on `127.0.0.1` for sandboxed commands. Hook trust, actual sandbox connectivity, and native Windows containment must be checked on the installed Codex release. See the [Codex integration guide](../../../website/content/docs/codex.md) for supported and unverified cases.
+Protected commands need a supported Codex sandbox profile with HTTP access to `127.0.0.1` through Codex's filtered proxy.
+The installed host rule covers every port on `127.0.0.1`.
+Hook trust and sandbox connectivity depend on the installed Codex release.
+Native Windows containment lacks equivalent verification.
+See the [Codex guide](../../../website/content/docs/codex.md) for execution context, setup, remedies, and coverage limits.

@@ -24,6 +24,20 @@ fn the_router_opens_with_the_frontmatter_the_installer_recognizes() {
 }
 
 #[test]
+fn the_codex_reference_finds_its_policy_and_requires_a_manual_check() {
+    let reference = read("references/codex.md");
+    for marker in [
+        "appa describe --adapter codex",
+        "inherits Codex's shell setting",
+        "check crashes, times out, or returns invalid JSON",
+        "supervisor fails before it replies",
+        "manually trusted end-to-end check",
+    ] {
+        assert!(reference.contains(marker), "the Codex guide names {marker:?}");
+    }
+}
+
+#[test]
 fn the_kagent_reference_carries_the_full_flow() {
     let reference = read("references/kagent.md");
     for marker in [

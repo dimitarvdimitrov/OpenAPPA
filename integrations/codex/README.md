@@ -1,91 +1,114 @@
-# Codex proxy compatibility
+# OpenAPPA with Codex
 
-`appa codex --` inherits the user's `code_mode_host` setting.
-It enables hooks for APPA policy checks.
+Use OpenAPPA with Codex CLI to check tool calls against your policy.
+For supported shell commands, APPA holds the output until the policy allows Codex to read it.
+
+## Set up
+
+Install `appa` and Codex CLI on macOS or Linux.
+Sign in to Codex, then run:
+
+```sh
+appa plugin install codex
+```
+
+The installer connects Codex to APPA and adds `/appa-guide` to help you set up your policy.
+Codex uses its own policy and background runtime, separate from Claude Code.
+
+Open Codex and run `/hooks`.
+Review and trust the APPA hooks.
+Exit Codex, then start a session with:
+
+```sh
+appa codex --
+```
+
+Run `/appa-guide init` to check your tools and configure their policies.
+See the [Codex guide](../../website/content/docs/codex.md) for the full setup and removal steps.
+Use its [protection check](../../website/content/docs/codex.md#check-protection-in-a-test-project) to test your session.
+
+The launcher uses your Codex shell setting, `features.code_mode_host`.
 Codex CLI 0.159.2 enables the shell by default.
-The [host compatibility gate](HOST_MODE_GATE.md) records Codex CLI 0.159.2 behavior.
-Codex can run an original command when it skips a hook or receives no valid response.
-The installed hook supervisor answers with a block if the APPA worker fails or exceeds its deadline.
+Before Codex starts, the launcher checks that commands in the Codex sandbox can reach APPA.
+The installed `appa` permission profile allows access to every port on `127.0.0.1`.
+It does not allow public hosts, and the filesystem sandbox stays active.
 
-## Probe
+## Policy and tool coverage
 
-Build `appa` with `cargo build -p appa`.
-Run `python3 integrations/codex/proxy_probe.py`.
+The launcher reloads the installed policy before each new session.
+`appa codex-reload` explicitly reloads it and prints the active policy key.
+`appa codex-policy-key` reads that key without a reload.
+Start a new session after a policy change. Existing sessions retain their information labels.
+The installation receipt selects the policy for `appa describe --adapter codex` unless `--config` overrides it.
 
-The probe uses a temporary project and a temporary Codex profile. It makes no model call.
-It checks the rewritten wrapper, the admitted result, early output, and a forged job handle.
+The battery supplies command contracts. The default root supplies patch, local image, plan, and local `webrun` contracts.
+The web contract requires a `public` audience and marks results `suspicious`.
+Other hooked tools use a wildcard classifier. Explicit contracts take precedence, and failed annotations cause refusal.
+Subagent and peer routes remain explicitly blocked until lifecycle verification.
 
-## Launcher
+Apps, browser use, and `--search` remain available under Codex's configuration.
+Hosted `WebSearch` can bypass hooks. The web contract covers the recorded local `webrun` route.
+Supplied session tools do not establish the complete configured MCP inventory.
+`MCP servers: none` does not prove that the Codex configuration contains no servers.
 
-`appa plugin install codex` adds an `appa` permission profile to the active Codex config.
-`appa codex --` selects the profile and checks runtime HTTP access from `codex sandbox` before it starts Codex.
-The profile permits all sandboxed commands to reach all ports on `127.0.0.1`.
-Codex requires a manual `/hooks` review because the launcher cannot verify hook trust through a supported noninteractive interface.
+The [Codex guide](../../website/content/docs/codex.md#default-coverage-and-the-first-web-call) includes web, local-inspection, and refused-tool examples.
 
-## Scope
+## Command context
 
-The proxy supports finite Unix commands without later input. It starts the selected `sh`, `bash`, or `zsh` shell without a controlling terminal.
-It closes child stdin and buffers at most 1 MiB of combined output. It checks job status while the child runs.
+Native `exec_command` options can disappear from hook events.
+A native `workdir`, `shell`, or `login` option therefore does not reliably select the wrapped execution context.
+Plain commands use the hook session directory and the hook's `$SHELL` with `-lc`.
 
-Native Windows commands, later input, PTY programs, prompts, full-screen tools, daemonized children, and unsupported shell modes remain outside this proxy scope.
-The protected launcher requires a Codex sandbox profile with the disclosed `127.0.0.1` HTTP exception.
-The hook cannot guarantee coverage if Codex skips or disables it.
-
-## Execution context
-
-Codex supplies the session directory and the command to Bash hooks.
-The documented hook input does not include the native `workdir`, `shell`, or `login` options.
-APPA cannot recover these omitted options from the hook.
-Plain commands use the hook's session directory and the hook process's `$SHELL` with `-lc`.
-
-Native execution options alone therefore do not select the APPA child's execution context.
-The [official hook reference](https://learn.chatgpt.com/docs/hooks) describes these input fields.
-
-The first command line can supply an explicit APPA execution header:
+Supply an explicit context in the command's first line:
 
 ```sh
 # appa-codex-exec-v1 {"workdir":"/absolute/project/nested","shell":"/bin/bash","login":false}
 pwd
-cat selected.txt
 ```
 
-This header is the authoritative execution context for the APPA child.
-All three fields are required. The directory must exist and use an absolute path.
-The shell must use an absolute path to an existing `sh`, `bash`, or `zsh` file.
-
-`login=false` selects `-c`. `login=true` selects `-lc` and permits normal shell startup files.
-APPA restores the declared directory after shell startup, before the command.
-Startup files can still alter the environment or execute their own commands.
-
-APPA removes the header before policy classification and supplies the declared directory to context providers.
-Command selectors and annotators receive the actual command, shell, login mode, and directory.
-Malformed headers, duplicate fields, repeated headers, unknown fields, and conflicting supplied hook options cause refusal.
-Environment overrides and terminal commands remain unsupported.
+APPA validates the directory, shell, and login mode before classification.
+Selectors inspect the command payload after APPA removes the header.
+The proxy restores the approved directory after shell startup.
+Startup files can still alter the environment or execute commands.
+Malformed or conflicting headers cause refusal. Environment overrides and terminal commands remain unsupported.
 Without an active hook, the header is only a shell comment and supplies no execution context.
+`login=false` uses `-c`. `login=true` uses `-lc`.
+For a directory change alone, `cd /absolute/project/nested && pwd` retains the default shell and login mode.
+See the [context reference](../../website/content/docs/codex.md#command-directory-and-shell) for header requirements.
 
-For a plain command, an explicit `cd /absolute/project/nested` can select a directory within the command itself.
-The header also supplies the correct initial directory to policy context providers.
+APPA wrapped commands cannot receive later input because the wrapper closes child stdin and does not forward input.
+Codex supports later input through `write_stdin` when an unwrapped execution session keeps stdin open.
 
-## Later input on Codex CLI 0.159.2
+## Limits
 
-Tests ran on macOS 26.6.2 arm64 on 30 September 2026.
-A direct `codex sandbox` command received input through a FIFO without echo.
-A disposable model-controlled Codex session then ran the rewritten APPA wrapper.
-Its non-TTY command received EOF before later input arrived.
-Codex returned `write_stdin failed: stdin is closed for this session; rerun exec_command with tty=true to keep stdin open`.
-The terminal retry echoed the synthetic `HELLO` input.
+The APPA hook blocks a call if the policy check crashes, times out, or returns invalid JSON.
+If you do not trust the APPA hooks through `/hooks`, Codex can skip APPA checks and run commands without APPA protection.
+If the hook command fails before it replies, Codex can also run the original command without an APPA check.
 
-This release did not provide a non-echoing pipe for later input in the tested command session.
-The wrapper keeps child stdin closed. Later input is unsupported.
+If an update changes the hooks, trust the updated hooks through `/hooks` before you start a session.
+Do not describe a session as protected until a manual end-to-end check passes with those trusted hooks.
 
-## Lifetime and output
+The command wrapper supports Unix commands that finish without more input.
+It uses `sh`, `bash`, or `zsh`, closes command input, and holds up to 100 MiB of combined output.
+Interactive terminal programs, native Windows commands, and unsupported shell modes are outside this scope.
 
-A runtime restart invalidates live job handles. Persistent ownership prevents replay.
-The runtime withholds a post-hook after restart because it cannot verify the old turn.
-Stop, Interrupt, and a new prompt close live jobs and block late post-hook acknowledgement.
+Do not use this integration to contain commands that detach and continue in the background.
+Such a command can survive cancellation. APPA cannot reverse its changes.
+The policy must deny these commands until APPA can contain them.
 
-On cancellation, the wrapper kills the shell process group and ordinary descendants.
-A deliberately daemonized child can escape that group and continue after the wrapper settles indeterminately.
-Codex CLI 0.159.0 also left such a child alive after its parent exited.
-Do not use this proxy to contain daemonized commands. The policy must deny them until process-tree containment exists.
-The wrapper withholds output from an escaped child that retains its pipes. It cannot reverse that child's side effects.
+A runtime restart or a new prompt prevents APPA from releasing pending command output.
+Installed Stop and SessionEnd hooks cancel pending commands and prevent APPA from releasing their output.
+The installer does not register an Interrupt hook. Cancellation lacks equivalent live verification for every host path.
+
+## Compatibility tests
+
+To check the command wrapper without a model call, run:
+
+```sh
+cargo build -p appa
+python3 integrations/codex/proxy_probe.py
+```
+
+This test uses a temporary project and Codex profile.
+It checks the command wrapper and output release.
+It also checks that APPA rejects unauthorized requests.
