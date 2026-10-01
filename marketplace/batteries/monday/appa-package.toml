@@ -4,7 +4,7 @@ description = "Rules for the monday Platform MCP server's 99 tools: internal rea
 
 [battery]
 policy = "appa.toml"
-hosts = ["claude-code", "kagent"]
+hosts = ["claude-code", "kagent", "codex"]
 namespaces = ["monday"]
 helpers = ["audience-source.py"]
 benefit = "APPA asks monday.com for the confirmed email of a notification's recipient. With this, APPA sends a notification only with data that recipient may see."

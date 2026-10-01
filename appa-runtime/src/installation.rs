@@ -1223,8 +1223,8 @@ mod tests {
     /// A plugin's first install includes the batteries its manifest requires,
     /// and only those: each shipped plugin's requirements exist in the
     /// catalog and are written for its host. Claude Code cannot be gated
-    /// without its own battery; kagent requires none, its guide adds them one
-    /// at a time.
+    /// without its own battery. Codex also requires its own battery. Kagent
+    /// requires none. Its guide adds them one at a time.
     #[test]
     fn each_shipped_plugin_requires_batteries_its_version_ships_for_its_host() {
         use std::collections::BTreeMap;
@@ -1257,6 +1257,7 @@ mod tests {
             required,
             BTreeMap::from([
                 ("claude-code".to_owned(), vec!["claude-code".to_owned()]),
+                ("codex".to_owned(), vec!["codex".to_owned()]),
                 ("kagent".to_owned(), vec![]),
             ])
         );

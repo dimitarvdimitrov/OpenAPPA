@@ -1,0 +1,215 @@
+# Codex shell policy. Bash is represented by the runtime-owned appa_exec job,
+# whose arguments are the actual child command. The outer Bash hook is only
+# transport and is never a second APPA dispatch.
+
+[policy]
+version = 2
+
+# Static credential selectors run before the generic model classifier. They
+# catch common literal paths and credential-producing commands; aliases,
+# expansions, and scripts still depend on the classifier.
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.env*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.claude.json*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.credentials.json*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.codex/auth.json*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.ssh/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.aws/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.netrc*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.config/gh/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.docker/config.json*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.git-credentials*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.kube/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.npmrc*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.pypirc*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.azure/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.gnupg/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.config/gcloud/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.password-store/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.vault-token*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*id_rsa*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*id_ed25519*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*/proc/*environ*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*/Library/Keychains/*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*.databrickscfg*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*databricks*configure*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*databricks*auth token*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*databricks*auth env*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*databricks*secrets get-secret*)"
+delta = { audience = ["self"] }
+tags = ["credentials"]
+
+# The GitHub battery supplies repository and author facts through context.github.
+# Repository commands use the same trust and audience instructions as Claude Code.
+[[policy.annotator]]
+name = "codex.repository-requirements"
+builtin = "codex"
+hint = "Treat context.github as the deployment's repository and author facts for this command. For repository writes, use the destination visibility. If the destination is public or unknown, require audience public. If the destination is private or internal, require audience internal. For reads, preserve the session's audience. For read results, use trusted only when the finding establishes every author as a repository owner, member, collaborator, or bot."
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*git push*)"
+description = "Runs one approved child command and returns admitted output."
+annotator = "codex.repository-requirements"
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*git -* push*)"
+description = "Runs one approved child command and returns admitted output."
+annotator = "codex.repository-requirements"
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*gh pr *)"
+description = "Runs one approved child command and returns admitted output."
+annotator = "codex.repository-requirements"
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*gh issue *)"
+description = "Runs one approved child command and returns admitted output."
+annotator = "codex.repository-requirements"
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*gh release *)"
+description = "Runs one approved child command and returns admitted output."
+annotator = "codex.repository-requirements"
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*gh api *)"
+description = "Runs one approved child command and returns admitted output."
+annotator = "codex.repository-requirements"
+
+[[policy.tool]]
+name = "host/codex/appa_exec(command:*gh repo *)"
+description = "Runs one approved child command and returns admitted output."
+annotator = "codex.repository-requirements"
+
+# The classifier inspects the complete child command, including publishing
+# destinations. Its mandate admits the deployment's declared effects.
+# A nonzero outcome retains reservations only when the annotation declares
+# effects. Without declared effects, complete diagnostics can be admitted.
+[[policy.annotator]]
+name = "codex.command-requirements"
+builtin = "codex"
+hint = "Classify the actual shell command. Reads of private credentials narrow output to self. Output from web or untrusted repositories is suspicious. Git pushes, gh publication, uploads, and network requests require the destination's readers. If repository visibility or destination is unknown, require public. Never infer an effect-free outcome merely from a command's nonzero exit."
+
+[[policy.tool]]
+name = "host/codex/appa_exec"
+description = "Runs one approved child command and returns admitted output."
+annotator = "codex.command-requirements"
+
+# The wrapper buffers stdout and stderr until the runtime admits this result.
+# The sanitizer is offered for a result the session cannot read unchanged.
+[[policy.sanitizer]]
+name = "redact-secrets"
+on = ["tool_output"]
+
+[policy.sanitizer.permits]
+audience = { from = ["self"], to = ["public"] }
+
+[policy.deployment]
+confined_results = ["host/codex/appa_exec"]
+
+[externals.sanitizers.redact-secrets]
+builtin = "redact-secrets"

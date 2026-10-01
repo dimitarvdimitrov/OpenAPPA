@@ -1,0 +1,9 @@
+schema = 1
+name = "codex"
+description = "Protect Codex CLI sessions with OpenAPPA hooks and a separate local runtime."
+
+[plugin]
+host = "codex"
+protocol = 1
+default_policy = "default.appa.toml"
+batteries = ["codex"]
