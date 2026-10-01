@@ -38,8 +38,13 @@ fn render(chips: Option<&str>) -> String {
 fn chips(url: &str, status_input: &[u8]) -> Option<String> {
     let input: serde_json::Value = serde_json::from_slice(status_input).ok()?;
     let session_id = input.get("session_id")?.as_str()?;
+    trajectory_chips(url, &format!("cc:{session_id}"))
+}
+
+/// Read the current label for one trajectory. Each read has a 300 ms deadline.
+pub(crate) fn trajectory_chips(url: &str, trajectory: &str) -> Option<String> {
     let endpoint = Endpoint::parse(url).ok()?;
-    let trajectory: String = url::form_urlencoded::byte_serialize(format!("cc:{session_id}").as_bytes()).collect();
+    let trajectory: String = url::form_urlencoded::byte_serialize(trajectory.as_bytes()).collect();
     let answer = get(
         &endpoint,
         &format!("/status?trajectory={trajectory}"),

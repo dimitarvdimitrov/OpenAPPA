@@ -104,6 +104,10 @@ pub fn run(event: &str, url: &str) -> ExitCode {
     if !crate::hook_client::session_is_gated() {
         return ExitCode::SUCCESS;
     }
+    #[cfg(unix)]
+    if event == "SessionStart" {
+        crate::codex_terminal::record_session(b"{}", false);
+    }
     let mut input = Vec::new();
     let result = std::io::stdin()
         .take(MAX_EVENT_BYTES + 1)
@@ -118,7 +122,13 @@ pub fn run(event: &str, url: &str) -> ExitCode {
             }
         });
     let response = match result {
-        Ok(response) => response,
+        Ok(response) => {
+            #[cfg(unix)]
+            if event == "SessionStart" {
+                crate::codex_terminal::record_session(&input, response["continue"] != false);
+            }
+            response
+        }
         Err(reason) => {
             eprintln!("OpenAPPA Codex hook denied the event: {reason}");
             fallback(event, &reason)

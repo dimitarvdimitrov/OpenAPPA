@@ -13,6 +13,13 @@ It sets `appa`'s `execute_remedy_plan` tool to `approval_mode = "approve"` so re
 APPA still requests human approval when a remedy requires it.
 The launcher preserves global Codex settings and rejects explicit conflicting approval options.
 
+On macOS and Linux, interactive sessions show APPA's mark, `trust:`, and `audience:` in a separate live footer.
+The terminal wrapper reserves two rows and uses the alternate screen, including with `--no-alt-screen`.
+The footer reads the current trajectory label from the runtime after an accepted `SessionStart` hook.
+If the runtime does not answer, the footer shows only the mark.
+Noninteractive commands and redirected input or output use Codex directly.
+[Codex issue #17827](https://github.com/openai/codex/issues/17827) requests native custom statusline support that can replace this wrapper.
+
 The default policy includes the Codex battery for command contracts.
 The root policy supplies patch, local image, plan, web, and reporting contracts.
 `host/codex/webrun` requires a `public` audience and labels web results `suspicious`.
